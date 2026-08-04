@@ -69,6 +69,7 @@
     }
     #controlsBar select.ctrl-select:hover{background:rgba(255,255,255,.18)}
     #controlsBar select.ctrl-select option{background:#1a1a2e;color:#fff}
+    #controlsBar select.ctrl-select.hidden{display:none}
     #progressContainer{flex:1 1 100%;height:6px;background:rgba(255,255,255,.15);border-radius:4px;cursor:pointer;margin:0 4px}
     #progressFill{height:100%;background:#6366f1;border-radius:4px;width:0%}
     #timeDisplay{font-size:.76rem;font-variant-numeric:tabular-nums;color:#ccc;min-width:105px;text-align:center;white-space:nowrap}
@@ -252,16 +253,8 @@
       </button>
       <span id="timeDisplay">00:00 / 00:00</span>
       <div id="progressContainer"><div id="progressFill"></div></div>
-      <select class="ctrl-select" id="audioSelect">
-        <option value="0">Áudio: PT-BR</option>
-        <option value="1">Áudio: EN</option>
-      </select>
-      <select class="ctrl-select" id="subtitleSelect">
-        <option value="0">Legenda: PT-BR</option>
-        <option value="1">Legenda: ES</option>
-        <option value="2">Legenda: EN</option>
-        <option value="-1">Legenda: Off</option>
-      </select>
+      <select class="ctrl-select hidden" id="audioSelect"></select>
+      <select class="ctrl-select hidden" id="subtitleSelect"></select>
       <span id="currentVideoLabel" title="Vídeo atual"></span>
       <div id="userStatusBar"></div>
     </div>

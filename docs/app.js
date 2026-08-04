@@ -157,6 +157,8 @@ async function initApp() {
       video.controls = false;
       audSel.disabled = true;
       subSel.disabled = true;
+      audSel.classList.add('hidden');
+      subSel.classList.add('hidden');
     } else {
       ppBtn.style.display = '';
       progC.style.display = '';
@@ -198,6 +200,118 @@ async function initApp() {
     } else {
       modalScreenShareBtn.style.display = 'none';
     }
+  }
+
+  // ── Track population ──
+  var knownAudioTracks = [];
+  var knownTextTracks = [];
+
+  // Map language code to friendly label
+  function trackLabel(track, index) {
+    if (track.label && track.label.trim() !== '') return track.label;
+    if (track.language && track.language.trim() !== '') {
+      var langMap = {
+        'pt': 'Português', 'pt-BR': 'Português (BR)', 'pt-PT': 'Português (PT)',
+        'en': 'Inglês', 'es': 'Espanhol', 'fr': 'Francês', 'de': 'Alemão',
+        'it': 'Italiano', 'ja': 'Japonês', 'ko': 'Coreano', 'zh': 'Chinês',
+        'ru': 'Russo', 'ar': 'Árabe', 'hi': 'Hindi', 'nl': 'Holandês',
+        'pl': 'Polonês', 'tr': 'Turco', 'sv': 'Sueco', 'no': 'Norueguês'
+      };
+      var code = track.language;
+      if (langMap[code]) return langMap[code];
+      return code.toUpperCase();
+    }
+    return 'Faixa ' + (index + 1);
+  }
+
+  function updateAudioSelect() {
+    var currentVal = audSel.value;
+    audSel.innerHTML = '';
+    
+    if (knownAudioTracks.length <= 1) {
+      // Only 0 or 1 audio track — hide the select
+      audSel.classList.add('hidden');
+      return;
+    }
+
+    for (var i = 0; i < knownAudioTracks.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = '🎵 ' + trackLabel(knownAudioTracks[i], i);
+      audSel.appendChild(opt);
+    }
+    audSel.classList.remove('hidden');
+    
+    // Restore previous selection if still valid
+    if (currentVal && parseInt(currentVal) < knownAudioTracks.length) {
+      audSel.value = currentVal;
+    }
+  }
+
+  function updateSubtitleSelect() {
+    var currentVal = subSel.value;
+    subSel.innerHTML = '';
+
+    if (knownTextTracks.length === 0) {
+      // No subtitle tracks — hide the select
+      subSel.classList.add('hidden');
+      return;
+    }
+
+    for (var i = 0; i < knownTextTracks.length; i++) {
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = '💬 ' + trackLabel(knownTextTracks[i], i);
+      subSel.appendChild(opt);
+    }
+    // Add "Off" option
+    var offOpt = document.createElement('option');
+    offOpt.value = '-1';
+    offOpt.textContent = '💬 Desligado';
+    subSel.appendChild(offOpt);
+    
+    subSel.classList.remove('hidden');
+    
+    // Restore previous selection if still valid
+    if (currentVal && (parseInt(currentVal) < knownTextTracks.length || currentVal === '-1')) {
+      subSel.value = currentVal;
+    } else {
+      subSel.value = '-1';
+      // Also disable all text tracks
+      var tr = video.textTracks;
+      for (var j = 0; j < tr.length; j++) tr[j].mode = 'hidden';
+    }
+  }
+
+  function resetTrackState() {
+    knownAudioTracks = [];
+    knownTextTracks = [];
+    audSel.classList.add('hidden');
+    subSel.classList.add('hidden');
+    audSel.innerHTML = '';
+    subSel.innerHTML = '';
+  }
+
+  function scanTracks() {
+    // Scan audio tracks
+    var at = video.audioTracks;
+    if (at) {
+      knownAudioTracks = [];
+      for (var i = 0; i < at.length; i++) {
+        knownAudioTracks.push({ label: at[i].label || '', language: at[i].language || '', id: at[i].id || '' });
+      }
+    }
+    
+    // Scan text tracks (subtitles/captions)
+    var tt = video.textTracks;
+    if (tt) {
+      knownTextTracks = [];
+      for (var j = 0; j < tt.length; j++) {
+        knownTextTracks.push({ label: tt[j].label || '', language: tt[j].language || '', kind: tt[j].kind || '' });
+      }
+    }
+
+    console.log('[Tracks] Audio:', knownAudioTracks.length, 'Text:', knownTextTracks.length);
   }
 
   // ── WebRTC: Start Screen/Camera Share ──
@@ -479,7 +593,8 @@ async function initApp() {
       var src = data.src.startsWith('http') ? data.src : BACKEND_URL + data.src;
       video.src = src; video.load();
       currentVideoName = data.name; curVidLbl.textContent = data.name.replace(/\.[^.]+$/, '');
-      video.muted = true; subSel.value = '0';
+      video.muted = true;
+      resetTrackState();
     });
 
     socket.on('remotePlay', function (time) { if (currentMediaType !== 'screen') rPlay(time); });
@@ -586,11 +701,75 @@ async function initApp() {
     if (currentMediaType === 'screen') { timeD.textContent = 'AO VIVO'; progF.style.width = '100%'; return; }
     if (video.duration) { progF.style.width = (video.currentTime / video.duration * 100) + '%'; timeD.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration); }
   });
+  
+  // Listen for track additions/changes
+  video.audioTracks && video.audioTracks.addEventListener('addtrack', function () {
+    console.log('[Tracks] Audio track added');
+    scanTracks();
+    updateAudioSelect();
+    // Enable first audio track
+    var at = video.audioTracks;
+    if (at && at.length === 1) at[0].enabled = true;
+  });
+  
+  video.audioTracks && video.audioTracks.addEventListener('removetrack', function () {
+    scanTracks();
+    updateAudioSelect();
+  });
+  
+  video.audioTracks && video.audioTracks.addEventListener('change', function () {
+    scanTracks();
+    updateAudioSelect();
+  });
+
+  video.textTracks && video.textTracks.addEventListener('addtrack', function () {
+    console.log('[Tracks] Text track added');
+    scanTracks();
+    updateSubtitleSelect();
+    // Apply current subtitle selection to new track
+    setTimeout(function () {
+      var ix = parseInt(subSel.value);
+      var tr = video.textTracks;
+      if (ix === -1) {
+        for (var i = 0; i < tr.length; i++) tr[i].mode = 'hidden';
+      } else if (!isNaN(ix) && ix < tr.length) {
+        for (var j = 0; j < tr.length; j++) tr[j].mode = (j === ix ? 'showing' : 'hidden');
+      }
+    }, 50);
+  });
+
+  video.textTracks && video.textTracks.addEventListener('removetrack', function () {
+    scanTracks();
+    updateSubtitleSelect();
+  });
+
+  video.textTracks && video.textTracks.addEventListener('change', function () {
+    scanTracks();
+    updateSubtitleSelect();
+  });
+
   video.addEventListener('loadedmetadata', function () {
     if (currentMediaType === 'screen') return;
     timeD.textContent = '00:00 / ' + fmt(video.duration);
-    if (video.audioTracks && video.audioTracks.length > 1) for (var i = 0; i < video.audioTracks.length; i++) video.audioTracks[i].enabled = (i === 0);
+    
+    // Scan and populate track selects
+    scanTracks();
+    updateAudioSelect();
+    updateSubtitleSelect();
+    
+    // Enable first audio track by default
+    var at = video.audioTracks;
+    if (at && at.length > 0) {
+      for (var i = 0; i < at.length; i++) at[i].enabled = (i === 0);
+    }
+    // Default subtitles to off
+    var tt = video.textTracks;
+    if (tt) {
+      for (var j = 0; j < tt.length; j++) tt[j].mode = 'hidden';
+    }
+    subSel.value = '-1';
   });
+  
   video.addEventListener('waiting', function () {});
   video.addEventListener('playing', function () {});
 
@@ -708,7 +887,9 @@ async function initApp() {
     socket.emit('switchVideo', { src: '/media/' + fn, name: dn || fn });
     video.src = BACKEND_URL + '/media/' + fn; video.load();
     currentVideoName = dn || fn; curVidLbl.textContent = (dn || fn).replace(/\.[^.]+$/, '');
-    video.muted = true; subSel.value = '0'; closeMedia();
+    video.muted = true;
+    resetTrackState();
+    closeMedia();
   };
 
   // ── Pre-fill token from URL ──
