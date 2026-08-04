@@ -51,7 +51,10 @@ async function initApp() {
       mediaProgress = document.getElementById('mediaProgress'),
       mediaProgressText = document.getElementById('mediaProgressText'),
       mediaProgressBar = document.getElementById('mediaProgressBar'),
-      toastCt = document.getElementById('toastContainer');
+      toastCt = document.getElementById('toastContainer'),
+      screenShareBtn = document.getElementById('screenShareBtn'),
+      screenShareLabel = document.getElementById('screenShareLabel'),
+      liveIndicator = document.getElementById('liveIndicator');
 
   var socket = null;
   var myId = null, myNick = '', currentVideoName = '', chatOpen = false, unread = 0, userListData = [];
@@ -59,6 +62,17 @@ async function initApp() {
   var activeToasts = [];
   var authToken = null;
   var joined = false;
+
+  // ── WebRTC state ──
+  var isScreenSharing = false;         // true if I am the screen sharer
+  var screenStream = null;             // my local MediaStream when sharing
+  var peerConnections = {};            // map of peerId → RTCPeerConnection (only used by sharer)
+  var receivingPeer = null;            // RTCPeerConnection used by viewers to receive
+  var currentMediaType = 'file';       // 'file' or 'screen'
+  var screenSharerId = null;           // socket id of current screen sharer
+  var screenSharerName = null;         // name of current screen sharer
+
+  var ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
   function fmt(s) { if (isNaN(s)) return '00:00'; var m = Math.floor(s / 60), sec = Math.floor(s % 60); return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0') }
   function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML }
@@ -69,6 +83,7 @@ async function initApp() {
     ctrlB.classList.add('visible');
     chatToggle.classList.add('visible');
     mediaToggle.classList.add('visible');
+    screenShareBtn.classList.add('visible');
     clearTimeout(hideTimer);
     hideTimer = setTimeout(hideAllUI, 3500);
   }
@@ -76,15 +91,213 @@ async function initApp() {
     ctrlB.classList.remove('visible');
     chatToggle.classList.remove('visible');
     mediaToggle.classList.remove('visible');
+    screenShareBtn.classList.remove('visible');
   }
 
-  // ── Play/Pause/Seek ──
-  function iPlay() { video.muted = false; video.play().catch(function () { }); socket.emit('play', video.currentTime) }
-  function iPause() { video.pause(); socket.emit('pause', video.currentTime) }
-  function iSeek(t) { video.currentTime = t; socket.emit('seek', t) }
-  function rPlay(time) { if (Math.abs(video.currentTime - time) > 1) video.currentTime = time; video.muted = false; video.play().catch(function () { }) }
-  function rPause(time) { if (Math.abs(video.currentTime - time) > 1) video.currentTime = time; video.pause() }
-  function rSeek(time) { video.currentTime = time }
+  // ── UI mode switching ──
+  function setMediaMode(mode) {
+    currentMediaType = mode;
+    if (mode === 'screen') {
+      // Disable play/pause/seek — live stream
+      ppBtn.style.display = 'none';
+      progC.style.display = 'none';
+      timeD.textContent = 'AO VIVO';
+      liveIndicator.classList.add('show');
+      screenShareLabel.classList.add('visible');
+      // Clear video src and detach any file source
+      video.src = '';
+      video.removeAttribute('src');
+      video.controls = false;
+      audSel.disabled = true;
+      subSel.disabled = true;
+    } else {
+      ppBtn.style.display = '';
+      progC.style.display = '';
+      liveIndicator.classList.remove('show');
+      screenShareLabel.classList.remove('visible');
+      audSel.disabled = false;
+      subSel.disabled = false;
+    }
+  }
+
+  function updateScreenShareButton() {
+    if (isScreenSharing) {
+      screenShareBtn.classList.add('active');
+      screenShareBtn.title = 'Parar Compartilhamento';
+    } else {
+      screenShareBtn.classList.remove('active');
+      screenShareBtn.title = 'Compartilhar Tela';
+    }
+  }
+
+  // ── WebRTC: Start Screen Share (Sharer side) ──
+  async function startScreenShare() {
+    if (isScreenSharing) return;
+
+    // Check browser support
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      showToast('Erro', 'Seu navegador não suporta compartilhamento de tela.');
+      return;
+    }
+
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: true
+      });
+    } catch (e) {
+      console.error('getDisplayMedia error:', e);
+      if (e.name !== 'AbortError') {
+        showToast('Erro', 'Não foi possível iniciar o compartilhamento: ' + e.message);
+      }
+      return;
+    }
+
+    // Listen for stream end (user clicked "stop sharing" in browser UI)
+    screenStream.getVideoTracks()[0].addEventListener('ended', function () {
+      stopScreenShare();
+    });
+
+    // Notify server
+    socket.emit('startScreenShare');
+
+    isScreenSharing = true;
+    updateScreenShareButton();
+    setMediaMode('screen');
+    screenSharerName = myNick;
+
+    // Show local preview
+    video.srcObject = screenStream;
+    video.muted = true; // Don't echo local audio
+    video.play().catch(function () { });
+
+    // Create peer connections for each existing peer in room
+    // We do this when we get the userList; for now, set up for new peers via events
+
+    // We'll create peer connections reactively: when a new user joins (we get userList updates),
+    // or when we receive a webrtc-offer, we handle accordingly.
+  }
+
+  // ── WebRTC: Stop Screen Share ──
+  function stopScreenShare() {
+    if (!isScreenSharing) return;
+
+    // Stop all tracks
+    if (screenStream) {
+      screenStream.getTracks().forEach(function (track) { track.stop(); });
+      screenStream = null;
+    }
+
+    // Close all peer connections
+    Object.values(peerConnections).forEach(function (pc) { pc.close(); });
+    peerConnections = {};
+
+    isScreenSharing = false;
+    screenSharerId = null;
+    screenSharerName = null;
+    updateScreenShareButton();
+    setMediaMode('file');
+
+    // Clear video
+    video.srcObject = null;
+    video.src = '';
+    video.removeAttribute('src');
+
+    socket.emit('stopScreenShare');
+  }
+
+  // ── WebRTC: Create a peer connection to a specific viewer ──
+  function createPeerConnectionForViewer(targetId) {
+    if (!screenStream) return;
+    var pc = new RTCPeerConnection(ICE_SERVERS);
+
+    // Add local tracks
+    screenStream.getTracks().forEach(function (track) {
+      pc.addTrack(track, screenStream);
+    });
+
+    pc.onicecandidate = function (e) {
+      if (e.candidate) {
+        socket.emit('webrtc-ice-candidate', { target: targetId, candidate: e.candidate });
+      }
+    };
+
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        pc.close();
+        delete peerConnections[targetId];
+      }
+    };
+
+    // Create and send offer
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () {
+        socket.emit('webrtc-offer', { target: targetId, sdp: pc.localDescription });
+      })
+      .catch(function (err) { console.error('Error creating offer:', err); });
+
+    peerConnections[targetId] = pc;
+    return pc;
+  }
+
+  // ── WebRTC: Receive a stream as a viewer ──
+  function handleReceivedOffer(data) {
+    if (isScreenSharing) return; // I'm the sharer, don't receive
+
+    // Close previous receiving connection if exists
+    if (receivingPeer) { receivingPeer.close(); receivingPeer = null; }
+
+    var pc = new RTCPeerConnection(ICE_SERVERS);
+    receivingPeer = pc;
+
+    pc.ontrack = function (event) {
+      if (event.streams && event.streams[0]) {
+        video.srcObject = event.streams[0];
+        video.muted = false;
+        video.play().catch(function () { });
+        setMediaMode('screen');
+      }
+    };
+
+    pc.onicecandidate = function (e) {
+      if (e.candidate) {
+        socket.emit('webrtc-ice-candidate', { target: data.from, candidate: e.candidate });
+      }
+    };
+
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        pc.close();
+        receivingPeer = null;
+      }
+    };
+
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+      .then(function () { return pc.createAnswer(); })
+      .then(function (answer) { return pc.setLocalDescription(answer); })
+      .then(function () {
+        socket.emit('webrtc-answer', { target: data.from, sdp: pc.localDescription });
+      })
+      .catch(function (err) { console.error('Error handling offer:', err); });
+  }
+
+  function handleReceivedAnswer(data) {
+    var pc = peerConnections[data.from];
+    if (!pc) return;
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+      .catch(function (err) { console.error('Error setting remote description:', err); });
+  }
+
+  function handleReceivedIceCandidate(data) {
+    // Could be from a peer connection as viewer or as sharer
+    var pc = peerConnections[data.from] || receivingPeer;
+    if (!pc) return;
+    try {
+      pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+        .catch(function (err) { console.error('Error adding ICE candidate:', err); });
+    } catch (e) { console.error('ICE candidate error:', e); }
+  }
 
   // ── Connect with auth ──
   function connectWithToken(token) {
@@ -101,7 +314,6 @@ async function initApp() {
       loginOv.style.display = 'none';
       mainCt.style.display = 'flex';
       joined = true;
-      // Não abre o modal de mídia aqui — a decisão é tomada no handler roomState
       socket.emit('requestSync');
       showAllUI();
     });
@@ -118,41 +330,116 @@ async function initApp() {
 
     socket.on('roomState', function (st) {
       myId = st.myId || myId;
-      if (st.currentVideo) {
+      if (st.mediaType === 'screen' && st.screenSharer) {
+        // There is an active screen share — wait for WebRTC offer from sharer
+        screenSharerId = st.screenSharer;
+        screenSharerName = st.screenSharerName;
+        setMediaMode('screen');
+        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
+        // The sharer will send WebRTC offers to new joiners
+      } else if (st.currentVideo) {
+        setMediaMode('file');
         var src = st.currentVideo.startsWith('http') ? st.currentVideo : BACKEND_URL + st.currentVideo;
         if (video.getAttribute('src') !== src) { video.src = src; video.load(); }
         video.currentTime = st.currentTime || 0;
         if (st.paused) video.pause(); else { video.muted = false; video.play().catch(function () { }) }
         if (st.currentVideoName) { currentVideoName = st.currentVideoName; curVidLbl.textContent = currentVideoName.replace(/\.[^.]+$/, '') }
       } else {
-        // Nenhum vídeo selecionado ainda — abre o modal para o primeiro usuário escolher
+        setMediaMode('file');
         setTimeout(function() { openMedia(); }, 400);
       }
     });
 
     socket.on('sync', function (st) {
       myId = st.myId || myId;
-      if (st.currentVideo) {
+      if (st.mediaType === 'screen' && st.screenSharer) {
+        screenSharerId = st.screenSharer;
+        screenSharerName = st.screenSharerName;
+        setMediaMode('screen');
+        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
+      } else if (st.currentVideo) {
+        setMediaMode('file');
         var src = st.currentVideo.startsWith('http') ? st.currentVideo : BACKEND_URL + st.currentVideo;
         if (video.getAttribute('src') !== src) { video.src = src; video.load(); }
       }
       video.currentTime = st.currentTime || 0;
-      if (st.paused) video.pause(); else { video.muted = false; video.play().catch(function () { }) }
+      if (st.paused && st.mediaType !== 'screen') video.pause(); else if (st.mediaType !== 'screen') { video.muted = false; video.play().catch(function () { }) }
       if (st.currentVideoName) { currentVideoName = st.currentVideoName; curVidLbl.textContent = currentVideoName.replace(/\.[^.]+$/, '') }
     });
 
     socket.on('videoSwitch', function (data) {
+      setMediaMode('file');
       var src = data.src.startsWith('http') ? data.src : BACKEND_URL + data.src;
       video.src = src; video.load();
       currentVideoName = data.name; curVidLbl.textContent = data.name.replace(/\.[^.]+$/, '');
       video.muted = true; subSel.value = '0';
     });
 
-    socket.on('remotePlay', function (time) { rPlay(time) });
-    socket.on('remotePause', function (time) { rPause(time) });
-    socket.on('remoteSeek', function (time) { rSeek(time) });
+    socket.on('remotePlay', function (time) { if (currentMediaType !== 'screen') rPlay(time); });
+    socket.on('remotePause', function (time) { if (currentMediaType !== 'screen') rPause(time); });
+    socket.on('remoteSeek', function (time) { if (currentMediaType !== 'screen') rSeek(time); });
 
-    socket.on('userList', function (users) { userListData = users || []; renderUserStatusBar(); });
+    socket.on('userList', function (users) {
+      userListData = users || [];
+      renderUserStatusBar();
+
+      // If I'm screen sharing, create peer connections for new users
+      if (isScreenSharing && screenStream) {
+        var userIds = userListData.map(function (u) { return u.id; });
+        // Create peer connections for users that don't have one yet
+        userIds.forEach(function (uid) {
+          if (uid !== myId && !peerConnections[uid]) {
+            createPeerConnectionForViewer(uid);
+          }
+        });
+        // Clean up connections for users who left
+        Object.keys(peerConnections).forEach(function (pid) {
+          if (userIds.indexOf(pid) === -1) {
+            peerConnections[pid].close();
+            delete peerConnections[pid];
+          }
+        });
+      }
+    });
+
+    // ── WebRTC Signaling Events ──
+    socket.on('webrtc-offer', function (data) {
+      if (isScreenSharing) return; // I'm the sharer, not a receiver
+      handleReceivedOffer(data);
+    });
+
+    socket.on('webrtc-answer', function (data) {
+      handleReceivedAnswer(data);
+    });
+
+    socket.on('webrtc-ice-candidate', function (data) {
+      handleReceivedIceCandidate(data);
+    });
+
+    // ── Screen Share Events ──
+    socket.on('screenShareStarted', function (data) {
+      screenSharerId = data.screenSharer;
+      screenSharerName = data.screenSharerName;
+      curVidLbl.textContent = 'Tela de ' + data.screenSharerName;
+      setMediaMode('screen');
+    });
+
+    socket.on('screenShareStopped', function (data) {
+      screenSharerId = null;
+      screenSharerName = null;
+      // Close receiving peer connection
+      if (receivingPeer) { receivingPeer.close(); receivingPeer = null; }
+      // Clear video
+      video.srcObject = null;
+      video.src = '';
+      video.removeAttribute('src');
+      setMediaMode('file');
+      curVidLbl.textContent = 'Nenhum vídeo selecionado';
+    });
+
+    socket.on('screenShareError', function (data) {
+      showToast('Erro', data.message || 'Erro no compartilhamento.');
+    });
 
     socket.on('chatMessage', function (msg) {
       if (msg.id === myId) return;
@@ -172,15 +459,28 @@ async function initApp() {
     var sorted = userListData.slice().sort(function (a, b) { return (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0); });
     userStatusBar.innerHTML = sorted.map(function (u) {
       var isMe = u.id === myId;
-      return '<span class="user-chip"><span class="dot ' + esc(u.status || 'online') + '"></span>' + esc(u.nickname) + (isMe ? ' (você)' : '') + '</span>';
+      var sharing = (u.id === screenSharerId && screenSharerId) ? ' 🖥️' : '';
+      return '<span class="user-chip"><span class="dot ' + esc(u.status || 'online') + '"></span>' + esc(u.nickname) + sharing + (isMe ? ' (você)' : '') + '</span>';
     }).join('');
   }
+
+  // ── Play/Pause/Seek ──
+  function iPlay() { if (currentMediaType === 'screen') return; video.muted = false; video.play().catch(function () { }); socket.emit('play', video.currentTime) }
+  function iPause() { if (currentMediaType === 'screen') return; video.pause(); socket.emit('pause', video.currentTime) }
+  function iSeek(t) { if (currentMediaType === 'screen') return; video.currentTime = t; socket.emit('seek', t) }
+  function rPlay(time) { if (Math.abs(video.currentTime - time) > 1) video.currentTime = time; video.muted = false; video.play().catch(function () { }) }
+  function rPause(time) { if (Math.abs(video.currentTime - time) > 1) video.currentTime = time; video.pause() }
+  function rSeek(time) { video.currentTime = time }
 
   // ── Video events ──
   video.addEventListener('play', function () { playI.style.display = 'none'; pauseI.style.display = '' });
   video.addEventListener('pause', function () { playI.style.display = ''; pauseI.style.display = 'none' });
-  video.addEventListener('timeupdate', function () { if (video.duration) { progF.style.width = (video.currentTime / video.duration * 100) + '%'; timeD.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration); } });
+  video.addEventListener('timeupdate', function () {
+    if (currentMediaType === 'screen') { timeD.textContent = 'AO VIVO'; progF.style.width = '100%'; return; }
+    if (video.duration) { progF.style.width = (video.currentTime / video.duration * 100) + '%'; timeD.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration); }
+  });
   video.addEventListener('loadedmetadata', function () {
+    if (currentMediaType === 'screen') return;
     timeD.textContent = '00:00 / ' + fmt(video.duration);
     if (video.audioTracks && video.audioTracks.length > 1) for (var i = 0; i < video.audioTracks.length; i++) video.audioTracks[i].enabled = (i === 0);
   });
@@ -195,13 +495,14 @@ async function initApp() {
   ctrlB.addEventListener('mouseleave', function () { hideTimer = setTimeout(hideAllUI, 1200) });
   chatToggle.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
   mediaToggle.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
+  screenShareBtn.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
   document.addEventListener('mousemove', function (e) { if (document.fullscreenElement) showAllUI(); });
 
   // ── Controls ──
-  ppBtn.addEventListener('click', function () { video.paused ? iPlay() : iPause() });
+  ppBtn.addEventListener('click', function () { if (currentMediaType === 'screen') return; video.paused ? iPlay() : iPause() });
   fsBtn.addEventListener('click', function () { if (document.fullscreenElement) document.exitFullscreen(); else document.body.requestFullscreen().catch(function () { }); });
   document.addEventListener('fullscreenchange', function () { document.body.classList.toggle('fullscreen', !!document.fullscreenElement); showAllUI(); });
-  progC.addEventListener('click', function (e) { var r = progC.getBoundingClientRect(); iSeek(((e.clientX - r.left) / r.width) * video.duration) });
+  progC.addEventListener('click', function (e) { if (currentMediaType === 'screen') return; var r = progC.getBoundingClientRect(); iSeek(((e.clientX - r.left) / r.width) * video.duration) });
   audSel.addEventListener('change', function () { var ix = parseInt(audSel.value); if (video.audioTracks) for (var i = 0; i < video.audioTracks.length; i++) video.audioTracks[i].enabled = (i === ix) });
   subSel.addEventListener('change', function () { var ix = parseInt(subSel.value), tr = video.textTracks; for (var i = 0; i < tr.length; i++) tr[i].mode = (ix === -1) ? 'hidden' : (i === ix ? 'showing' : 'hidden') });
 
@@ -209,10 +510,20 @@ async function initApp() {
     var tg = e.target.tagName;
     if (tg === 'INPUT' && e.target !== nickIn && e.target !== chatIn) return;
     if (e.target === chatIn) return;
-    if (e.key === ' ') { e.preventDefault(); video.paused ? iPlay() : iPause(); showAllUI() }
+    if (e.key === ' ') { e.preventDefault(); if (currentMediaType === 'screen') return; video.paused ? iPlay() : iPause(); showAllUI() }
     else if (e.key === 'f' && tg !== 'INPUT') { fsBtn.click() }
-    else if (e.key === 'ArrowLeft') { iSeek(Math.max(0, video.currentTime - 5)) }
-    else if (e.key === 'ArrowRight') { iSeek(Math.min(video.duration || 0, video.currentTime + 5)) }
+    else if (e.key === 'ArrowLeft' && currentMediaType !== 'screen') { iSeek(Math.max(0, video.currentTime - 5)) }
+    else if (e.key === 'ArrowRight' && currentMediaType !== 'screen') { iSeek(Math.min(video.duration || 0, video.currentTime + 5)) }
+  });
+
+  // ── Screen Share Button ──
+  screenShareBtn.addEventListener('click', function () {
+    if (isScreenSharing) {
+      stopScreenShare();
+    } else {
+      startScreenShare();
+    }
+    showAllUI();
   });
 
   // ── Chat ──
@@ -288,6 +599,7 @@ async function initApp() {
   }
 
   window.selectVid = function (fn, dn) {
+    setMediaMode('file');
     socket.emit('switchVideo', { src: '/media/' + fn, name: dn || fn });
     video.src = BACKEND_URL + '/media/' + fn; video.load();
     currentVideoName = dn || fn; curVidLbl.textContent = (dn || fn).replace(/\.[^.]+$/, '');

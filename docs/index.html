@@ -113,6 +113,39 @@
     }
     #mediaToggleBtn.visible{opacity:1}
     #mediaToggleBtn:hover{background:#252540;transform:scale(1.05)}
+    #screenShareBtn{
+      position:fixed;right:16px;bottom:208px;z-index:100;
+      width:48px;height:48px;border-radius:50%;
+      background:#1a1a28;color:#4ade80;border:1px solid #2a2a3e;cursor:pointer;
+      box-shadow:0 4px 20px rgba(0,0,0,.3);
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;transition:background .2s,transform .1s,opacity .4s ease;
+    }
+    #screenShareBtn.visible{opacity:1}
+    #screenShareBtn:hover{background:#252540;transform:scale(1.05)}
+    #screenShareBtn.active{background:#dc2626;color:#fff;border-color:#dc2626}
+    #screenShareBtn.active:hover{background:#b91c1c}
+    #screenShareLabel{
+      position:fixed;right:72px;bottom:216px;z-index:100;
+      color:#4ade80;font-size:.7rem;font-weight:600;
+      opacity:0;transition:opacity .3s;pointer-events:none;
+      text-shadow:0 0 8px rgba(74,222,128,.4);
+      white-space:nowrap;
+    }
+    #screenShareLabel.visible{opacity:1}
+    #liveIndicator{
+      position:absolute;top:16px;right:16px;z-index:25;
+      background:rgba(220,38,38,.85);color:#fff;padding:5px 12px;
+      border-radius:16px;font-size:.72rem;font-weight:700;
+      display:none;align-items:center;gap:6px;
+      letter-spacing:.04em;box-shadow:0 2px 12px rgba(220,38,38,.4);
+    }
+    #liveIndicator.show{display:flex}
+    #liveIndicator .live-dot{
+      width:8px;height:8px;border-radius:50%;background:#fff;
+      animation:livePulse 1.2s infinite;
+    }
+    @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.3}}
     #chatPanel{
       position:fixed;right:0;top:0;bottom:0;z-index:150;
       width:360px;max-width:90vw;background:#111118;
@@ -227,6 +260,7 @@
 <div id="mainContainer">
   <div id="videoArea">
     <video id="videoPlayer" muted playsinline disableRemotePlayback></video>
+    <div id="liveIndicator"><span class="live-dot"></span> AO VIVO</div>
 
     <div id="controlsBar">
       <button class="ctrl-btn" id="playPauseBtn" title="Play/Pause">
@@ -258,6 +292,10 @@
 <button id="mediaToggleBtn" title="Mídias">
   <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="3 9 21 9" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="9 21 9 9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="15" cy="15" r="3" fill="currentColor" opacity=".3"/><polygon points="15 13 17 15 15 17 13 15" fill="currentColor"/></svg>
 </button>
+<button id="screenShareBtn" title="Compartilhar Tela">
+  <svg class="icon" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 21h8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 17v4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+</button>
+<span id="screenShareLabel">Compartilhando tela</span>
 <button id="chatToggleBtn" title="Chat">
   <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
   <span class="badge" id="chatBadge">0</span>

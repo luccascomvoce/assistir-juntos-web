@@ -217,6 +217,20 @@ function bcastUserList(room) {
   })));
 }
 
+function getRoomState(room) {
+  if (!rooms[room]) return null;
+  const r = rooms[room];
+  return {
+    paused: r.paused,
+    currentTime: r.currentTime,
+    currentVideo: r.currentVideo,
+    currentVideoName: r.currentVideoName,
+    mediaType: r.mediaType || "file",
+    screenSharer: r.screenSharer || null,
+    screenSharerName: r.screenSharerName || null,
+  };
+}
+
 io.on("connection", (socket) => {
   console.log("connect: " + socket.id + " (" + socket.nickname + ")");
 
@@ -235,6 +249,9 @@ io.on("connection", (socket) => {
       currentTime: rooms[room].currentTime,
       currentVideo: rooms[room].currentVideo,
       currentVideoName: rooms[room].currentVideoName,
+      mediaType: rooms[room].mediaType || "file",
+      screenSharer: rooms[room].screenSharer || null,
+      screenSharerName: rooms[room].screenSharerName || null,
       myId: socket.id,
     });
     bcastUserList(room);
@@ -272,13 +289,102 @@ io.on("connection", (socket) => {
   socket.on("requestSync", () => {
     const r = socket.currentRoom;
     if (!r || !rooms[r]) return;
-    let t = rooms[r].currentTime;
-    if (!rooms[r].paused) t += (Date.now() - rooms[r].lastSyncTime) / 1000;
-    socket.emit("sync", { paused: rooms[r].paused, currentTime: t, currentVideo: rooms[r].currentVideo, currentVideoName: rooms[r].currentVideoName, myId: socket.id });
+    const state = getRoomState(r);
+    let t = state.currentTime;
+    if (!state.paused && state.mediaType !== "screen") t += (Date.now() - rooms[r].lastSyncTime) / 1000;
+    socket.emit("sync", {
+      ...state,
+      currentTime: t,
+      myId: socket.id,
+    });
+  });
+
+  // ── Screen Share ──
+  socket.on("startScreenShare", () => {
+    const r = socket.currentRoom;
+    if (!r || !rooms[r]) return;
+    // Only one screen share at a time
+    if (rooms[r].mediaType === "screen") {
+      socket.emit("screenShareError", { message: "Já existe um compartilhamento de tela ativo na sala." });
+      return;
+    }
+    rooms[r].mediaType = "screen";
+    rooms[r].screenSharer = socket.id;
+    rooms[r].screenSharerName = socket.nickname;
+    rooms[r].paused = false;
+    rooms[r].currentVideo = null;
+    rooms[r].currentVideoName = "Tela de " + socket.nickname;
+    io.to(r).emit("screenShareStarted", {
+      screenSharer: socket.id,
+      screenSharerName: socket.nickname,
+    });
+    io.to(r).emit("chatMessage", { id: null, from: "Sistema", text: socket.nickname + " começou a compartilhar a tela.", system: true });
+  });
+
+  socket.on("stopScreenShare", () => {
+    const r = socket.currentRoom;
+    if (!r || !rooms[r]) return;
+    if (rooms[r].screenSharer !== socket.id) {
+      socket.emit("screenShareError", { message: "Apenas quem iniciou o compartilhamento pode encerrá-lo." });
+      return;
+    }
+    rooms[r].mediaType = "file";
+    rooms[r].screenSharer = null;
+    rooms[r].screenSharerName = null;
+    rooms[r].currentVideoName = "Nenhum vídeo selecionado";
+    rooms[r].paused = true;
+    rooms[r].currentTime = 0;
+    io.to(r).emit("screenShareStopped", { screenSharer: socket.id });
+    io.to(r).emit("chatMessage", { id: null, from: "Sistema", text: socket.nickname + " encerrou o compartilhamento de tela.", system: true });
+  });
+
+  // ── WebRTC Signaling ──
+  socket.on("webrtc-offer", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    // Forward offer to a specific peer, or broadcast to all except sender
+    if (data.target) {
+      socket.to(data.target).emit("webrtc-offer", { from: socket.id, sdp: data.sdp });
+    } else {
+      socket.to(r).emit("webrtc-offer", { from: socket.id, sdp: data.sdp });
+    }
+  });
+
+  socket.on("webrtc-answer", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    if (data.target) {
+      socket.to(data.target).emit("webrtc-answer", { from: socket.id, sdp: data.sdp });
+    } else {
+      socket.to(r).emit("webrtc-answer", { from: socket.id, sdp: data.sdp });
+    }
+  });
+
+  socket.on("webrtc-ice-candidate", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    if (data.target) {
+      socket.to(data.target).emit("webrtc-ice-candidate", { from: socket.id, candidate: data.candidate });
+    } else {
+      socket.to(r).emit("webrtc-ice-candidate", { from: socket.id, candidate: data.candidate });
+    }
   });
 
   socket.on("disconnect", () => {
     const r = socket.currentRoom;
+    if (r && rooms[r]) {
+      // If screen sharer disconnects, clean up screen share state
+      if (rooms[r].screenSharer === socket.id) {
+        rooms[r].mediaType = "file";
+        rooms[r].screenSharer = null;
+        rooms[r].screenSharerName = null;
+        rooms[r].currentVideoName = "Nenhum vídeo selecionado";
+        rooms[r].paused = true;
+        rooms[r].currentTime = 0;
+        io.to(r).emit("screenShareStopped", { screenSharer: socket.id });
+        io.to(r).emit("chatMessage", { id: null, from: "Sistema", text: socket.nickname + " saiu e seu compartilhamento de tela foi encerrado.", system: true });
+      }
+    }
     if (r && rooms[r] && rooms[r].users[socket.id]) {
       rooms[r].users[socket.id].status = "reconnecting";
       bcastUserList(r);
