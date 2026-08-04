@@ -101,8 +101,7 @@ async function initApp() {
       loginOv.style.display = 'none';
       mainCt.style.display = 'flex';
       joined = true;
-      // Open media modal immediately
-      setTimeout(function() { openMedia(); }, 300);
+      // Não abre o modal de mídia aqui — a decisão é tomada no handler roomState
       socket.emit('requestSync');
       showAllUI();
     });
@@ -122,10 +121,13 @@ async function initApp() {
       if (st.currentVideo) {
         var src = st.currentVideo.startsWith('http') ? st.currentVideo : BACKEND_URL + st.currentVideo;
         if (video.getAttribute('src') !== src) { video.src = src; video.load(); }
+        video.currentTime = st.currentTime || 0;
+        if (st.paused) video.pause(); else { video.muted = false; video.play().catch(function () { }) }
+        if (st.currentVideoName) { currentVideoName = st.currentVideoName; curVidLbl.textContent = currentVideoName.replace(/\.[^.]+$/, '') }
+      } else {
+        // Nenhum vídeo selecionado ainda — abre o modal para o primeiro usuário escolher
+        setTimeout(function() { openMedia(); }, 400);
       }
-      video.currentTime = st.currentTime || 0;
-      if (st.paused) video.pause(); else { video.muted = false; video.play().catch(function () { }) }
-      if (st.currentVideoName) { currentVideoName = st.currentVideoName; curVidLbl.textContent = currentVideoName.replace(/\.[^.]+$/, '') }
     });
 
     socket.on('sync', function (st) {
