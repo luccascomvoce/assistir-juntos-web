@@ -1,40 +1,26 @@
-name: Deploy Frontend to GitHub Pages
+# Optional: This workflow can be deleted if using branch deploy with /docs
+# The simplest setup: Settings → Pages → Source: Deploy from branch → main /docs
+name: (Opcional) Deploy Frontend
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Copy frontend files
-        run: |
-          mkdir _site
-          cp -r docs/* _site/
+      - uses: actions/configure-pages@v4
+      - run: |
+          mkdir _site && cp -r docs/* _site/
           curl -sL https://cdn.socket.io/4.7.5/socket.io.min.js -o _site/socket.io.min.js
-
-      - name: Fix HTML imports
-        run: |
-          sed -i 's|<script src="/app.js"></script>|<script src="socket.io.min.js"></script>\n<script src="app.js"></script>|' _site/index.html
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - run: sed -i 's|<script src="/app.js"></script>|<script src="socket.io.min.js"></script>\n<script src="app.js"></script>|' _site/index.html
+      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/deploy-pages@v4
