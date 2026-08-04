@@ -47,5 +47,4 @@ Desktop.ini
 *.swo
 
 # ── CI Generated ──
-frontend/tunnel-url.json
 _site/
