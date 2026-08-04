@@ -28,7 +28,7 @@ if ($url) {
 
     # Save to frontend config
     $config = @{ url = $url } | ConvertTo-Json -Compress
-    Set-Content -Path "frontend\tunnel-url.json" -Value $config
+    Set-Content -Path "docs\tunnel-url.json" -Value $config
     Write-Host "tunnel-url.json atualizado" -ForegroundColor Gray
 
     # Show tokens

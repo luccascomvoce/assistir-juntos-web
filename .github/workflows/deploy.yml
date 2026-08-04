@@ -25,7 +25,7 @@ jobs:
       - name: Copy frontend files
         run: |
           mkdir _site
-          cp -r frontend/* _site/
+          cp -r docs/* _site/
           curl -sL https://cdn.socket.io/4.7.5/socket.io.min.js -o _site/socket.io.min.js
 
       - name: Fix HTML imports
