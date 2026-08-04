@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  server:
+    build: .
+    container_name: assistir-juntos-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./videos:/app/videos
+      - ./uploads:/app/uploads
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - VIDEOS_DIR=/app/videos
+      - TOKENS_PATH=/app/data/tokens.json
+      - CORS_ORIGIN=https://seu-usuario.github.io
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: assistir-juntos-tunnel
+    restart: unless-stopped
+    command: tunnel --url http://server:3000
+    depends_on:
+      - server

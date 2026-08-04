@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Assistir Juntos</title>
+  <style>
+    *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+    body{
+      font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+      background:#0a0a0f;color:#e0e0e0;
+      height:100vh;height:100dvh;overflow:hidden;
+      display:flex;user-select:none;-webkit-user-select:none;
+      touch-action:manipulation;
+    }
+    .icon{width:20px;height:20px;fill:currentColor;flex-shrink:0}
+    .icon-sm{width:16px;height:16px}
+    .icon-lg{width:28px;height:28px}
+    /* Login */
+    #loginOverlay{
+      position:fixed;inset:0;background:#0a0a0f;z-index:2000;
+      display:flex;align-items:center;justify-content:center;
+      flex-direction:column;gap:16px;
+    }
+    #loginOverlay .logo{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+    #loginOverlay .logo svg{width:40px;height:40px;fill:#6366f1}
+    #loginOverlay h1{font-size:1.8rem;color:#e0e0e0}
+    #loginOverlay input{
+      padding:14px 18px;font-size:1rem;border:2px solid #2a2a3a;
+      border-radius:12px;background:#14141f;color:#fff;width:280px;
+      text-align:center;outline:none;transition:border-color .2s;
+    }
+    #loginOverlay input:focus{border-color:#6366f1}
+    .btn{
+      padding:12px 28px;font-size:1rem;border:none;border-radius:12px;
+      background:#6366f1;color:#fff;cursor:pointer;font-weight:600;
+      transition:background .2s,transform .1s;
+      display:inline-flex;align-items:center;gap:8px;
+    }
+    .btn:hover{background:#5558e6}.btn:active{transform:scale(.97)}
+    .btn-sm{padding:6px 14px;font-size:.8rem;border-radius:8px}
+    #loginOverlay small{color:#666;font-size:.78rem;text-align:center;max-width:280px;line-height:1.4}
+    /* Main */
+    #mainContainer{display:none;width:100%;height:100%;flex-direction:column;position:relative}
+    #videoArea{flex:1;display:flex;background:#000;position:relative;min-height:0}
+    #videoPlayer{width:100%;height:100%;object-fit:contain}
+    /* ── ALL UI overlays share opacity transition ── */
+    #controlsBar,#chatToggleBtn,#mediaToggleBtn{
+      transition:opacity .4s ease;
+    }
+    /* Controls Bar */
+    #controlsBar{
+      position:absolute;bottom:0;left:0;right:0;
+      background:linear-gradient(transparent,rgba(0,0,0,.88));
+      padding:40px 14px 14px;display:flex;align-items:center;
+      gap:8px;opacity:0;flex-wrap:wrap;z-index:20;
+    }
+    #controlsBar.visible{opacity:1}
+    #controlsBar .ctrl-btn{
+      background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+      color:#fff;padding:8px 10px;border-radius:10px;cursor:pointer;
+      font-size:.82rem;backdrop-filter:blur(6px);
+      display:inline-flex;align-items:center;gap:4px;
+    }
+    #controlsBar .ctrl-btn:hover{background:rgba(255,255,255,.18)}
+    #controlsBar select.ctrl-select{
+      background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);
+      color:#fff;padding:8px 10px;border-radius:10px;cursor:pointer;
+      font-size:.82rem;backdrop-filter:blur(6px);
+      -webkit-appearance:none;appearance:none;
+    }
+    #controlsBar select.ctrl-select:hover{background:rgba(255,255,255,.18)}
+    #controlsBar select.ctrl-select option{background:#1a1a2e;color:#fff}
+    #progressContainer{flex:1 1 100%;height:6px;background:rgba(255,255,255,.15);border-radius:4px;cursor:pointer;margin:0 4px}
+    #progressFill{height:100%;background:#6366f1;border-radius:4px;width:0%}
+    #timeDisplay{font-size:.76rem;font-variant-numeric:tabular-nums;color:#ccc;min-width:105px;text-align:center;white-space:nowrap}
+    #currentVideoLabel{font-size:.7rem;color:#999;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-left:auto}
+    /* User status */
+    #userStatusBar{display:flex;align-items:center;gap:6px;margin-left:8px;font-size:.7rem;color:#ccc;flex-wrap:wrap}
+    #userStatusBar .user-chip{
+      display:inline-flex;align-items:center;gap:5px;
+      padding:3px 8px;border-radius:12px;background:rgba(255,255,255,.06);white-space:nowrap;
+    }
+    #userStatusBar .user-chip .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    #userStatusBar .user-chip .dot.online{background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,.5)}
+    #userStatusBar .user-chip .dot.reconnecting{background:#facc15;animation:blink .8s infinite}
+    #userStatusBar .user-chip .dot.disconnected{background:#f87171}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+    #userStatusBar .empty{color:#555;font-size:.7rem}
+    /* Chat Toggle */
+    #chatToggleBtn{
+      position:fixed;right:16px;bottom:80px;z-index:100;
+      width:52px;height:52px;border-radius:50%;
+      background:#6366f1;color:#fff;border:none;cursor:pointer;
+      box-shadow:0 4px 20px rgba(99,102,241,.4);
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;
+    }
+    #chatToggleBtn.visible{opacity:1}
+    #chatToggleBtn:hover{background:#5558e6;transform:scale(1.05)}
+    #chatToggleBtn:active{transform:scale(.95)}
+    #chatToggleBtn .badge{
+      position:absolute;top:-4px;right:-4px;
+      background:#ef4444;color:#fff;border-radius:50%;
+      width:20px;height:20px;font-size:.65rem;font-weight:700;
+      display:flex;align-items:center;justify-content:center;
+      display:none;
+    }
+    #chatToggleBtn .badge.show{display:flex}
+    /* Media Toggle */
+    #mediaToggleBtn{
+      position:fixed;right:16px;bottom:144px;z-index:100;
+      width:48px;height:48px;border-radius:50%;
+      background:#1a1a28;color:#a78bfa;border:1px solid #2a2a3e;cursor:pointer;
+      box-shadow:0 4px 20px rgba(0,0,0,.3);
+      display:flex;align-items:center;justify-content:center;
+      opacity:0;
+    }
+    #mediaToggleBtn.visible{opacity:1}
+    #mediaToggleBtn:hover{background:#252540;transform:scale(1.05)}
+    /* Chat Panel */
+    #chatPanel{
+      position:fixed;right:0;top:0;bottom:0;z-index:150;
+      width:360px;max-width:90vw;background:#111118;
+      border-left:1px solid #1e1e2e;
+      display:flex;flex-direction:column;
+      transform:translateX(100%);transition:transform .3s ease;
+      box-shadow:-8px 0 30px rgba(0,0,0,.5);
+    }
+    #chatPanel.open{transform:translateX(0)}
+    #chatPanel .chat-header{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:16px;border-bottom:1px solid #1e1e2e;
+    }
+    #chatPanel .chat-header h3{font-size:.9rem;text-transform:uppercase;letter-spacing:.05em;color:#888;display:flex;align-items:center;gap:8px}
+    #chatPanel .chat-close-btn{background:none;border:none;color:#888;cursor:pointer;padding:4px;border-radius:6px}
+    #chatPanel .chat-close-btn:hover{background:rgba(255,255,255,.05)}
+    #chatMessages{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+    #chatMessages .msg{background:#1a1a28;padding:10px 14px;border-radius:12px;font-size:.84rem;max-width:88%;word-break:break-word;animation:fadeIn .2s ease}
+    @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    #chatMessages .msg.system{background:transparent;color:#555;font-size:.72rem;text-align:center;max-width:100%;font-style:italic}
+    #chatMessages .msg.own{align-self:flex-end;background:#6366f1}
+    #chatMessages .msg .author{font-weight:600;font-size:.7rem;color:#a78bfa;display:block;margin-bottom:3px}
+    #chatMessages .msg.own .author{color:#c4b5fd}
+    #chatInputRow{display:flex;padding:12px 14px;gap:8px;border-top:1px solid #1e1e2e}
+    #chatInput{flex:1;padding:11px 14px;border-radius:22px;border:1px solid #2a2a3a;background:#1a1a28;color:#fff;outline:none;font-size:.84rem}
+    #chatInput:focus{border-color:#6366f1}
+    #sendBtn{width:42px;height:42px;border-radius:50%;border:none;background:#6366f1;color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+    #sendBtn:hover{background:#5558e6}
+    /* Media Modal */
+    #mediaOverlay{
+      position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.7);
+      display:none;align-items:center;justify-content:center;
+      backdrop-filter:blur(4px);
+    }
+    #mediaOverlay.open{display:flex}
+    #mediaModal{
+      background:#14141f;border:1px solid #2a2a3e;border-radius:16px;
+      width:440px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;
+      box-shadow:0 20px 60px rgba(0,0,0,.6);animation:modalIn .25s ease;
+    }
+    @keyframes modalIn{from{opacity:0;transform:scale(.95) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
+    #mediaModal .modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid #1e1e2e}
+    #mediaModal .modal-header h3{font-size:.95rem;color:#e0e0e0;display:flex;align-items:center;gap:8px}
+    #mediaModal .modal-close-btn{background:none;border:none;color:#888;cursor:pointer;padding:4px;border-radius:6px}
+    #mediaModal .modal-close-btn:hover{background:rgba(255,255,255,.05)}
+    #mediaModal .modal-body{padding:16px 20px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:12px}
+    #mediaModal .upload-section{
+      border:2px dashed #2a2a3e;border-radius:12px;padding:12px 20px;
+      text-align:center;color:#888;font-size:.82rem;cursor:pointer;
+      transition:border-color .2s,background .2s;
+      display:flex;align-items:center;gap:10px;justify-content:center;
+    }
+    #mediaModal .upload-section:hover{border-color:#6366f1;background:rgba(99,102,241,.05)}
+    #mediaModal .upload-section svg{width:22px;height:22px;fill:#6366f1;flex-shrink:0}
+    #mediaModal input[type="file"]{display:none}
+    #mediaProgress{margin-top:4px;display:none}
+    #mediaProgress.show{display:block}
+    #mediaProgress .bar-bg{height:6px;background:#1a1a28;border-radius:4px;overflow:hidden;margin-top:4px}
+    #mediaProgress .bar-fill{height:100%;background:#6366f1;border-radius:4px;width:0%;transition:width .2s}
+    #mediaProgress .text{font-size:.75rem;color:#a78bfa}
+    #mediaList{display:flex;flex-direction:column;gap:8px;min-height:40px;flex:1}
+    #mediaList .vidRow{
+      display:flex;align-items:center;justify-content:space-between;
+      padding:10px 12px;background:#1a1a28;border-radius:10px;font-size:.8rem;
+      transition:background .15s;
+    }
+    #mediaList .vidRow:hover{background:#22223a}
+    #mediaList .vidRow span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;margin-right:10px;display:flex;align-items:center;gap:6px}
+    #mediaList .vidRow span svg{flex-shrink:0}
+    #mediaList .empty{color:#555;font-size:.8rem;text-align:center;padding:16px}
+    /* ── TOAST NOTIFICATIONS (bottom-right, over video, max 3) ── */
+    #toastContainer{
+      position:fixed;bottom:20px;right:16px;z-index:500;
+      display:flex;flex-direction:column-reverse;gap:8px;
+      pointer-events:none;
+      max-height:300px;
+    }
+    .toast{
+      background:rgba(26,26,40,.92);border:1px solid rgba(99,102,241,.4);
+      border-radius:14px;padding:12px 16px;max-width:340px;min-width:200px;
+      display:flex;align-items:flex-start;gap:10px;
+      box-shadow:0 8px 30px rgba(0,0,0,.5);
+      backdrop-filter:blur(8px);
+      animation:toastIn .35s ease;
+      pointer-events:auto;cursor:pointer;
+      transition:transform .2s,opacity .2s;
+    }
+    .toast:hover{transform:scale(1.02);border-color:#a78bfa}
+    .toast.removing{opacity:0;transform:translateX(120%)}
+    @keyframes toastIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+    .toast .toast-avatar{
+      width:36px;height:36px;border-radius:50%;background:#6366f1;
+      display:flex;align-items:center;justify-content:center;
+      font-size:.75rem;font-weight:700;color:#fff;flex-shrink:0;
+    }
+    .toast .toast-body{flex:1;min-width:0}
+    .toast .toast-from{font-weight:600;font-size:.78rem;color:#a78bfa;margin-bottom:3px}
+    .toast .toast-text{font-size:.78rem;color:#ddd;line-height:1.4;word-break:break-word}
+    body.fullscreen #mediaToggleBtn{bottom:20px;right:20px}
+    body.fullscreen #chatToggleBtn{bottom:20px;right:80px}
+    body.fullscreen #toastContainer{bottom:20px;right:16px}
+    @media(max-width:768px){
+      #chatPanel{width:100vw;max-width:100vw}
+      #mediaModal{width:96vw;max-height:85vh}
+      .toast{max-width:280px}
+    }
+    ::-webkit-scrollbar{width:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#2a2a3a;border-radius:10px}
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="loginOverlay">
+  <div class="logo">
+    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/><circle cx="6" cy="12" r="2.5"/></svg>
+    <h1>Assistir Juntos</h1>
+  </div>
+  <input type="text" id="nicknameInput" placeholder="Seu nome / apelido" maxlength="20" autofocus>
+  <button class="btn" id="joinBtn">
+    <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 22h20L12 2zm0 3.5L18.5 20h-13L12 5.5z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="17" r="1.5"/></svg>
+    Entrar na Sala
+  </button>
+  <small>Vídeo HEVC (H.265) — use Edge ou Safari.</small>
+</div>
+
+<!-- Main -->
+<div id="mainContainer">
+  <div id="videoArea">
+    <video id="videoPlayer" muted crossorigin="anonymous" playsinline disableRemotePlayback>
+      <track kind="subtitles" src="/subtitle_por.vtt" srclang="pt" label="PT" default>
+      <track kind="subtitles" src="/subtitle_spa.vtt" srclang="es" label="ES">
+      <track kind="subtitles" src="/subtitle_eng.vtt" srclang="en" label="EN">
+    </video>
+
+    <div id="controlsBar">
+      <button class="ctrl-btn" id="playPauseBtn" title="Play/Pause">
+        <svg class="icon icon-sm" id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+        <svg class="icon icon-sm" id="pauseIcon" viewBox="0 0 24 24" style="display:none"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>
+      </button>
+      <button class="ctrl-btn" id="fullscreenBtn" title="Tela Cheia (F)">
+        <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span id="timeDisplay">00:00 / 00:00</span>
+      <div id="progressContainer"><div id="progressFill"></div></div>
+      <select class="ctrl-select" id="audioSelect">
+        <option value="0">Áudio: PT-BR</option>
+        <option value="1">Áudio: EN</option>
+      </select>
+      <select class="ctrl-select" id="subtitleSelect">
+        <option value="0">Legenda: PT-BR</option>
+        <option value="1">Legenda: ES</option>
+        <option value="2">Legenda: EN</option>
+        <option value="-1">Legenda: Off</option>
+      </select>
+      <span id="currentVideoLabel" title="Vídeo atual">Backrooms</span>
+      <div id="userStatusBar"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Floating buttons -->
+<button id="mediaToggleBtn" title="Mídias">
+  <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="3 9 21 9" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="9 21 9 9" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="15" cy="15" r="3" fill="currentColor" opacity=".3"/><polygon points="15 13 17 15 15 17 13 15" fill="currentColor"/></svg>
+</button>
+<button id="chatToggleBtn" title="Chat">
+  <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <span class="badge" id="chatBadge">0</span>
+</button>
+
+<!-- Chat Panel -->
+<div id="chatPanel">
+  <div class="chat-header">
+    <h3><svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Chat</h3>
+    <button class="chat-close-btn" id="chatCloseBtn">
+      <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div id="chatMessages"></div>
+  <div id="chatInputRow">
+    <input type="text" id="chatInput" placeholder="Digite uma mensagem..." maxlength="500">
+    <button id="sendBtn" title="Enviar">
+      <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polygon points="22 2 15 22 11 13 2 9 22 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- Media Modal -->
+<div id="mediaOverlay">
+  <div id="mediaModal">
+    <div class="modal-header">
+      <h3><svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="3 9 21 9" fill="none" stroke="currentColor" stroke-width="1.5"/><polyline points="9 21 9 9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>Mídias</h3>
+      <div style="display:flex;align-items:center;gap:8px">
+        <label for="fileInput" style="cursor:pointer;color:#a78bfa;font-size:.78rem;display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;transition:background .2s" onmouseover="this.style.background='rgba(255,255,255,.05)'" onmouseout="this.style.background='none'">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="17 8 12 3 7 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="3" x2="12" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Enviar
+        </label>
+        <input type="file" id="fileInput" accept="video/*">
+        <button class="modal-close-btn" id="mediaCloseBtn">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div id="mediaProgress">
+        <div class="text" id="mediaProgressText">Enviando: 0%</div>
+        <div class="bar-bg"><div class="bar-fill" id="mediaProgressBar"></div></div>
+      </div>
+      <div id="mediaList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container (bottom-right, over video) -->
+<div id="toastContainer"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(function(){
+var nickIn=document.getElementById('nicknameInput'),
+    joinBtn=document.getElementById('joinBtn'),
+    loginOv=document.getElementById('loginOverlay'),
+    mainCt=document.getElementById('mainContainer'),
+    video=document.getElementById('videoPlayer'),
+    ppBtn=document.getElementById('playPauseBtn'),
+    playI=document.getElementById('playIcon'),
+    pauseI=document.getElementById('pauseIcon'),
+    fsBtn=document.getElementById('fullscreenBtn'),
+    timeD=document.getElementById('timeDisplay'),
+    progC=document.getElementById('progressContainer'),
+    progF=document.getElementById('progressFill'),
+    audSel=document.getElementById('audioSelect'),
+    subSel=document.getElementById('subtitleSelect'),
+    curVidLbl=document.getElementById('currentVideoLabel'),
+    ctrlB=document.getElementById('controlsBar'),
+    userStatusBar=document.getElementById('userStatusBar'),
+    chatToggle=document.getElementById('chatToggleBtn'),
+    chatBadge=document.getElementById('chatBadge'),
+    chatPanel=document.getElementById('chatPanel'),
+    chatClose=document.getElementById('chatCloseBtn'),
+    chatMs=document.getElementById('chatMessages'),
+    chatIn=document.getElementById('chatInput'),
+    sendBtn=document.getElementById('sendBtn'),
+    mediaToggle=document.getElementById('mediaToggleBtn'),
+    mediaOverlay=document.getElementById('mediaOverlay'),
+    mediaClose=document.getElementById('mediaCloseBtn'),
+    mediaList=document.getElementById('mediaList'),
+    fileInput=document.getElementById('fileInput'),
+    mediaProgress=document.getElementById('mediaProgress'),
+    mediaProgressText=document.getElementById('mediaProgressText'),
+    mediaProgressBar=document.getElementById('mediaProgressBar'),
+    toastCt=document.getElementById('toastContainer');
+
+var socket=io({transports:['polling','websocket']});
+var myId=null,myNick='',currentVideoName='',chatOpen=false,unread=0,userListData=[];
+var MAX_TOASTS=3;
+var activeToasts=[];
+
+function fmt(s){if(isNaN(s))return'00:00';var m=Math.floor(s/60),sec=Math.floor(s%60);return String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+// ── UI visibility (unified) ──
+var hideTimer;
+function showAllUI(){
+  ctrlB.classList.add('visible');
+  chatToggle.classList.add('visible');
+  mediaToggle.classList.add('visible');
+  clearTimeout(hideTimer);
+  hideTimer=setTimeout(hideAllUI,3500);
+}
+function hideAllUI(){
+  ctrlB.classList.remove('visible');
+  chatToggle.classList.remove('visible');
+  mediaToggle.classList.remove('visible');
+}
+
+// ── Play/Pause/Seek ──
+function iPlay(){video.muted=false;video.play().catch(function(){});socket.emit('play',video.currentTime)}
+function iPause(){video.pause();socket.emit('pause',video.currentTime)}
+function iSeek(t){video.currentTime=t;socket.emit('seek',t)}
+function rPlay(time){if(Math.abs(video.currentTime-time)>1)video.currentTime=time;video.muted=false;video.play().catch(function(){})}
+function rPause(time){if(Math.abs(video.currentTime-time)>1)video.currentTime=time;video.pause()}
+function rSeek(time){video.currentTime=time}
+
+// ── Join ──
+joinBtn.addEventListener('click',function(){
+  var n=nickIn.value.trim();if(!n)return;
+  myNick=n;socket.emit('setNickname',myNick);
+  socket.emit('join','sala-principal');
+  loginOv.style.display='none';mainCt.style.display='flex';
+  video.src='/video';currentVideoName='';
+  socket.emit('requestSync');
+  // Show UI briefly
+  showAllUI();
+});
+nickIn.addEventListener('keydown',function(e){if(e.key==='Enter')joinBtn.click()});
+
+// ── Socket events ──
+socket.on('connect',function(){myId=socket.id});
+socket.on('disconnect',function(){});
+
+socket.on('roomState',function(st){
+  myId=st.myId||myId;
+  // ** FIX 1: Switch to current video if different **
+  if(st.currentVideo && video.getAttribute('src')!==st.currentVideo){
+    video.src=st.currentVideo;video.load();
+  }
+  video.currentTime=st.currentTime||0;
+  if(st.paused)video.pause();else{video.muted=false;video.play().catch(function(){})}
+  if(st.currentVideoName){currentVideoName=st.currentVideoName;curVidLbl.textContent=currentVideoName.replace(/\.[^.]+$/,'')}
+});
+socket.on('sync',function(st){
+  myId=st.myId||myId;
+  if(st.currentVideo && video.getAttribute('src')!==st.currentVideo){
+    video.src=st.currentVideo;video.load();
+  }
+  video.currentTime=st.currentTime||0;
+  if(st.paused)video.pause();else{video.muted=false;video.play().catch(function(){})}
+  if(st.currentVideoName){currentVideoName=st.currentVideoName;curVidLbl.textContent=currentVideoName.replace(/\.[^.]+$/,'')}
+});
+socket.on('videoSwitch',function(data){
+  video.src=data.src;video.load();
+  currentVideoName=data.name;curVidLbl.textContent=data.name.replace(/\.[^.]+$/,'');
+  video.muted=true;subSel.value='0';
+});
+socket.on('remotePlay',function(time){rPlay(time)});
+socket.on('remotePause',function(time){rPause(time)});
+socket.on('remoteSeek',function(time){rSeek(time)});
+
+socket.on('userList',function(users){
+  userListData=users||[];
+  renderUserStatusBar();
+});
+
+socket.on('chatMessage',function(msg){
+  if(msg.id===myId)return;
+  addChatMsg(msg.from,msg.text,msg.system);
+  // ALWAYS show toast if chat not open
+  if(!chatOpen){
+    showToast(msg.from,msg.text);
+  }
+});
+
+// ── User Status Bar ──
+function renderUserStatusBar(){
+  if(!userListData.length){userStatusBar.innerHTML='<span class="empty">Nenhum participante</span>';return}
+  var statusOrder={online:0,reconnecting:1,disconnected:2};
+  var sorted=userListData.slice().sort(function(a,b){
+    return(statusOrder[a.status]||0)-(statusOrder[b.status]||0);
+  });
+  userStatusBar.innerHTML=sorted.map(function(u){
+    var isMe=u.id===myId;
+    var label=isMe?esc(u.nickname)+' (você)':esc(u.nickname);
+    return'<span class="user-chip"><span class="dot '+esc(u.status||'online')+'"></span>'+label+'</span>';
+  }).join('');
+}
+
+// ── Video events (UI only) ──
+video.addEventListener('play',function(){playI.style.display='none';pauseI.style.display=''});
+video.addEventListener('pause',function(){playI.style.display='';pauseI.style.display='none'});
+video.addEventListener('timeupdate',function(){
+  if(video.duration){
+    progF.style.width=(video.currentTime/video.duration*100)+'%';
+    timeD.textContent=fmt(video.currentTime)+' / '+fmt(video.duration);
+  }
+});
+video.addEventListener('loadedmetadata',function(){
+  timeD.textContent='00:00 / '+fmt(video.duration);
+  if(video.audioTracks&&video.audioTracks.length>1)
+    for(var i=0;i<video.audioTracks.length;i++)video.audioTracks[i].enabled=(i===0);
+});
+
+// ── Mouse/Touch activity → show/hide all UI ──
+video.addEventListener('mousemove',showAllUI);
+video.addEventListener('touchstart',function(){showAllUI()});
+video.addEventListener('mouseleave',function(){hideTimer=setTimeout(hideAllUI,1200)});
+ctrlB.addEventListener('mouseenter',function(){clearTimeout(hideTimer)});
+ctrlB.addEventListener('mouseleave',function(){hideTimer=setTimeout(hideAllUI,1200)});
+chatToggle.addEventListener('mouseenter',function(){clearTimeout(hideTimer)});
+mediaToggle.addEventListener('mouseenter',function(){clearTimeout(hideTimer)});
+// Also track fullscreen element for mouse events
+document.addEventListener('mousemove',function(e){
+  if(document.fullscreenElement){
+    // In fullscreen, any mouse movement shows UI
+    showAllUI();
+  }
+});
+
+// ── Controls ──
+ppBtn.addEventListener('click',function(){video.paused?iPlay():iPause()});
+fsBtn.addEventListener('click',function(){
+  if(document.fullscreenElement)document.exitFullscreen();
+  else document.body.requestFullscreen().catch(function(){});
+});
+document.addEventListener('fullscreenchange',function(){
+  document.body.classList.toggle('fullscreen',!!document.fullscreenElement);
+  showAllUI(); // show briefly on toggle
+});
+progC.addEventListener('click',function(e){var r=progC.getBoundingClientRect();iSeek(((e.clientX-r.left)/r.width)*video.duration)});
+audSel.addEventListener('change',function(){var ix=parseInt(audSel.value);if(video.audioTracks)for(var i=0;i<video.audioTracks.length;i++)video.audioTracks[i].enabled=(i===ix)});
+subSel.addEventListener('change',function(){var ix=parseInt(subSel.value),tr=video.textTracks;for(var i=0;i<tr.length;i++)tr[i].mode=(ix===-1)?'hidden':(i===ix?'showing':'hidden')});
+
+document.addEventListener('keydown',function(e){
+  var tg=e.target.tagName;
+  if(tg==='INPUT'&&e.target!==nickIn&&e.target!==chatIn)return;
+  if(e.target===chatIn)return;
+  if(e.key===' '){e.preventDefault();video.paused?iPlay():iPause();showAllUI()}
+  else if(e.key==='f'&&tg!=='INPUT'){fsBtn.click()}
+  else if(e.key==='ArrowLeft'){iSeek(Math.max(0,video.currentTime-5))}
+  else if(e.key==='ArrowRight'){iSeek(Math.min(video.duration||0,video.currentTime+5))}
+});
+
+// ── Chat ──
+function openChat(){
+  chatPanel.classList.add('open');chatOpen=true;
+  unread=0;chatBadge.classList.remove('show');chatBadge.textContent='0';
+  chatIn.focus();
+  // Dismiss all toasts
+  dismissAllToasts();
+  showAllUI();
+}
+function closeChat(){chatPanel.classList.remove('open');chatOpen=false}
+chatToggle.addEventListener('click',function(){chatOpen?closeChat():openChat();showAllUI()});
+chatClose.addEventListener('click',function(){closeChat();showAllUI()});
+
+function addChatMsg(from,txt,sys){
+  var d=document.createElement('div');d.className='msg'+(sys?' system':'');
+  if(!sys&&from===myNick)d.className+=' own';
+  if(!sys){var s=document.createElement('span');s.className='author';s.textContent=from;d.appendChild(s)}
+  d.appendChild(document.createTextNode(txt));chatMs.appendChild(d);chatMs.scrollTop=chatMs.scrollHeight;
+}
+function sendM(){var t=chatIn.value.trim();if(!t)return;socket.emit('chatMessage',t);addChatMsg(myNick,t,false);chatIn.value=''}
+sendBtn.addEventListener('click',sendM);
+chatIn.addEventListener('keydown',function(e){if(e.key==='Enter')sendM()});
+
+// ── TOASTS (bottom-right, max 3, stays until clicked or chat opens) ──
+function showToast(from,txt){
+  unread++;if(unread>99)unread=99;
+  chatBadge.textContent=unread>99?'99+':unread;
+  chatBadge.classList.add('show');
+  // Remove oldest if exceeding max
+  while(activeToasts.length>=MAX_TOASTS){
+    var oldest=activeToasts.shift();
+    if(oldest&&oldest.parentNode)oldest.parentNode.removeChild(oldest);
+  }
+  var toast=document.createElement('div');toast.className='toast';
+  toast.innerHTML='<div class="toast-avatar">'+esc(from.charAt(0).toUpperCase())+'</div>'+
+    '<div class="toast-body"><div class="toast-from">'+esc(from)+'</div>'+
+    '<div class="toast-text">'+esc(txt)+'</div></div>';
+  toast.addEventListener('click',function(){openChat()});
+  toastCt.appendChild(toast);
+  activeToasts.push(toast);
+}
+function dismissAllToasts(){
+  while(activeToasts.length){
+    var t=activeToasts.shift();
+    if(t&&t.parentNode)t.parentNode.removeChild(t);
+  }
+}
+
+// ── Media Modal ──
+function openMedia(){mediaOverlay.classList.add('open');loadMediaList();showAllUI()}
+function closeMedia(){mediaOverlay.classList.remove('open')}
+mediaToggle.addEventListener('click',function(){openMedia();showAllUI()});
+mediaClose.addEventListener('click',closeMedia);
+mediaOverlay.addEventListener('click',function(e){if(e.target===mediaOverlay)closeMedia()});
+
+fileInput.addEventListener('change',function(){if(fileInput.files.length)doUpload(fileInput.files[0])});
+
+function doUpload(file){
+  mediaProgress.classList.add('show');mediaProgressText.textContent='Enviando: 0%';mediaProgressBar.style.width='0%';
+  var fd=new FormData();fd.append('video',file);
+  var xhr=new XMLHttpRequest();xhr.open('POST','/upload');xhr.timeout=600000;
+  xhr.upload.onprogress=function(e){if(e.lengthComputable){var p=Math.round((e.loaded/e.total)*100);mediaProgressText.textContent='Enviando: '+p+'% ('+(e.loaded/1024/1024).toFixed(1)+' MB)';mediaProgressBar.style.width=p+'%'}};
+  xhr.onload=function(){mediaProgress.classList.remove('show');fileInput.value='';if(xhr.status===200){var r=JSON.parse(xhr.responseText);alert('Upload concluído: '+r.originalname);loadMediaList()}else{var m='Erro (HTTP '+xhr.status+').';try{m=JSON.parse(xhr.responseText).error||m}catch(ex){}alert(m)}};
+  xhr.onerror=function(){mediaProgress.classList.remove('show');fileInput.value='';alert('Erro de rede.')};
+  xhr.ontimeout=function(){mediaProgress.classList.remove('show');fileInput.value='';alert('Upload cancelado por timeout.')};
+  xhr.send(fd);
+}
+
+function loadMediaList(){
+  // Always show Backrooms immediately
+  var html='<div class="vidRow"><span><svg class="icon icon-sm" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="#6366f1"/></svg>Backrooms (original)</span><button class="btn btn-sm" onclick="selectVid(\'original\')">▶ Assistir</button></div>';
+  mediaList.innerHTML=html+'<div class="empty">Carregando...</div>';
+
+  var xhr=new XMLHttpRequest();xhr.open('GET','/api/videos');
+  xhr.onload=function(){
+    if(xhr.status!==200){
+      mediaList.innerHTML=html+'<div class="empty">(sem mídias adicionais)</div>';
+      return;
+    }
+    try{
+      var files=JSON.parse(xhr.responseText);
+      if(!Array.isArray(files)||!files.length){
+        mediaList.innerHTML=html+'<div class="empty">Nenhuma mídia enviada.<br>Clique na área tracejada acima para enviar.</div>';
+      }else{
+        html+=files.map(function(f){var sm=(f.size/1024/1024).toFixed(1);var dn=f.filename.replace(/^\d+-/,'');return'<div class="vidRow"><span><svg class="icon icon-sm" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="#a78bfa"/></svg>'+esc(dn)+' ('+sm+' MB)</span><button class="btn btn-sm" onclick="selectVid(\''+esc(f.filename)+'\')">▶ Assistir</button></div>'}).join('');
+        mediaList.innerHTML=html;
+      }
+    }catch(ex){
+      mediaList.innerHTML=html+'<div class="empty">Erro ao carregar lista.</div>';
+      console.log('loadMediaList error:',ex);
+    }
+  };
+  xhr.onerror=function(){mediaList.innerHTML=html+'<div class="empty">Erro de rede.</div>'};
+  xhr.timeout=8000;
+  xhr.ontimeout=function(){mediaList.innerHTML=html+'<div class="empty">Tempo esgotado.</div>'};
+  xhr.send();
+}
+
+window.selectVid=function(fn){
+  if(fn==='original'){socket.emit('switchVideo',{src:'/video',name:'Backrooms (2026) Dual 1080p.mp4'});video.src='/video';video.load();currentVideoName='Backrooms (2026) Dual 1080p.mp4';curVidLbl.textContent='Backrooms'}
+  else{var dn=fn.replace(/^\d+-/,'');socket.emit('switchVideo',{src:'/media/'+fn,name:dn});video.src='/media/'+fn;video.load();currentVideoName=dn;curVidLbl.textContent=dn.replace(/\.[^.]+$/,'')}
+  video.muted=true;subSel.value='0';closeMedia();
+};
+
+// Show UI initially
+showAllUI();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+# ── Dependencies ──
+node_modules/
+
+# ── Secrets & Environment ──
+.env
+*.env
+data/tokens.json
+
+# ── Docker ──
+docker-compose.override.yml
+
+# ── Media Files (NEVER commit videos/audio) ──
+videos/*
+!videos/.gitkeep
+uploads/*
+!uploads/.gitkeep
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+*.m4v
+*.ogg
+*.m4a
+*.mp3
+*.aac
+*.wav
+*.flac
+*.vtt
+*.srt
+*.ass
+
+# ── Logs ──
+*.log
+upload.log
+cloudflared.log
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── CI Generated ──
+frontend/tunnel-url.json
+_site/
