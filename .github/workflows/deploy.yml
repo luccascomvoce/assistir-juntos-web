@@ -1,56 +1,18 @@
-name: Deploy
+name: Deploy Frontend to GitHub Pages
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  backend:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Docker Compose Deploy
-        shell: pwsh
-        run: |
-          docker-compose down --remove-orphans 2>$null
-          docker-compose up -d --build
-          Start-Sleep -Seconds 15
-
-      - name: Extract tunnel URL
-        id: tunnel
-        shell: pwsh
-        run: |
-          $logs = docker logs assistir-juntos-tunnel 2>&1 | Out-String
-          $url = [regex]::Match($logs, 'https://[a-z0-9.-]+\.trycloudflare\.com').Value
-          if (-not $url) { Write-Error "Tunnel URL not found"; exit 1 }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "url=$url"
-          Write-Host "Tunnel URL: $url"
-
-      - name: Update frontend config
-        shell: pwsh
-        run: |
-          $url = '${{ steps.tunnel.outputs.url }}'
-          @{ url = $url } | ConvertTo-Json -Compress | Set-Content -Path frontend/tunnel-url.json
-          git config user.name "github-actions[bot]"
-          git config user.email "actions@github.com"
-          git add frontend/tunnel-url.json
-          git diff --staged --quiet
-          if ($LASTEXITCODE -ne 0) {
-            git commit -m "update tunnel url [${{ github.run_number }}]"
-            git push
-          } else {
-            Write-Host "No changes to commit"
-          }
-
-  frontend:
-    needs: backend
+  deploy:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
