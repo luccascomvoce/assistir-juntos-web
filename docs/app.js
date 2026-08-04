@@ -3,7 +3,7 @@ var BACKEND_URL = null;
 
 async function loadBackendUrl() {
   try {
-    var resp = await fetch('/tunnel-url.json?t=' + Date.now());
+    var resp = await fetch('tunnel-url.json?t=' + Date.now());
     if (resp.ok) {
       var data = await resp.json();
       if (data && data.url) { BACKEND_URL = data.url; console.log('Backend (tunnel):', BACKEND_URL); return; }
