@@ -1,42 +1,49 @@
-name: Deploy Backend + Update Frontend
+name: Deploy
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
-  # ── Build & Deploy Backend (Self-Hosted Runner on your machine) ──
   backend:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
       - name: Docker Compose Deploy
+        shell: pwsh
         run: |
-          docker-compose down --remove-orphans
+          docker-compose down --remove-orphans 2>$null
           docker-compose up -d --build
-
-      - name: Wait for tunnel
-        run: sleep 15
+          Start-Sleep -Seconds 15
 
       - name: Extract tunnel URL
         id: tunnel
+        shell: pwsh
         run: |
-          URL=$(docker logs assistir-juntos-tunnel 2>&1 | grep -oP 'https://[a-z0-9.-]+\.trycloudflare\.com' | tail -1)
-          echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "Tunnel URL: $URL"
+          $logs = docker logs assistir-juntos-tunnel 2>&1 | Out-String
+          $url = [regex]::Match($logs, 'https://[a-z0-9.-]+\.trycloudflare\.com').Value
+          if (-not $url) { Write-Error "Tunnel URL not found"; exit 1 }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "url=$url"
+          Write-Host "Tunnel URL: $url"
 
       - name: Update frontend config
+        shell: pwsh
         run: |
-          echo "{\"url\":\"${{ steps.tunnel.outputs.url }}\"}" > frontend/tunnel-url.json
+          $url = '${{ steps.tunnel.outputs.url }}'
+          @{ url = $url } | ConvertTo-Json -Compress | Set-Content -Path frontend/tunnel-url.json
           git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.email "actions@github.com"
           git add frontend/tunnel-url.json
-          git diff --staged --quiet || git commit -m "🤖 update tunnel url [${{ github.run_number }}]"
-          git push
+          git diff --staged --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "update tunnel url [${{ github.run_number }}]"
+            git push
+          } else {
+            Write-Host "No changes to commit"
+          }
 
-  # ── Deploy Frontend to GitHub Pages ──
   frontend:
     needs: backend
     runs-on: ubuntu-latest
@@ -57,10 +64,9 @@ jobs:
         run: |
           mkdir _site
           cp -r frontend/* _site/
-          # Also copy socket.io client for standalone use
           curl -sL https://cdn.socket.io/4.7.5/socket.io.min.js -o _site/socket.io.min.js
 
-      - name: Fix socket.io import in index.html
+      - name: Fix HTML imports
         run: |
           sed -i 's|<script src="/app.js"></script>|<script src="socket.io.min.js"></script>\n<script src="app.js"></script>|' _site/index.html
 
