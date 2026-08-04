@@ -18,6 +18,16 @@ services:
       - TOKENS_PATH=/app/data/tokens.json
       - CORS_ORIGIN=https://luccascomvoce.github.io
 
+  # TURN/STUN server for WebRTC (enables connections behind NAT/firewalls)
+  coturn:
+    image: coturn/coturn:latest
+    container_name: assistir-juntos-turn
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./docker/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    # Uses host network mode for correct IP detection in STUN/TURN
+
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: assistir-juntos-tunnel
@@ -25,3 +35,11 @@ services:
     command: tunnel --url http://server:3000
     depends_on:
       - server
+
+  tunnel-turn:
+    image: cloudflare/cloudflared:latest
+    container_name: assistir-juntos-tunnel-turn
+    restart: unless-stopped
+    command: tunnel --url tcp://localhost:3478
+    depends_on:
+      - coturn

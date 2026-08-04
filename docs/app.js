@@ -16,6 +16,7 @@ async function loadBackendUrl() {
 // ── Main App ──
 async function initApp() {
   await loadBackendUrl();
+  configureICEServers(BACKEND_URL);
 
   var nickIn = document.getElementById('tokenInput'),
       joinBtn = document.getElementById('joinBtn'),
@@ -68,8 +69,14 @@ async function initApp() {
   // ── Device detection ──
   var isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || 
                  (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+  var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  var isAndroid = /Android/i.test(navigator.userAgent);
+  var isAndroidChrome = isAndroid && /Chrome/i.test(navigator.userAgent) && !/Edge/i.test(navigator.userAgent);
   var hasGetDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   var hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  // Android Chrome 94+ supports getDisplayMedia for screen sharing
+  var canScreenShare = hasGetDisplayMedia && (!isMobile || (isAndroidChrome && !isIOS));
+  var canOnlyCamera = !canScreenShare && hasGetUserMedia;
 
   // ── WebRTC state ──
   var isScreenSharing = false;         // true if I am the screen sharer
@@ -80,7 +87,40 @@ async function initApp() {
   var screenSharerId = null;           // socket id of current screen sharer
   var screenSharerName = null;         // name of current screen sharer
 
-  var ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+  // ICE Servers: STUN (Google) + TURN (local coturn via Cloudflare Tunnel)
+  // The TURN server URL is dynamically set when tunnel URL is loaded
+  var ICE_SERVERS = { 
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      // TURN server will be added dynamically after tunnel URL is known
+    ] 
+  };
+
+  // Add local TURN server to ICE servers after backend URL is known
+  function configureICEServers(backendUrl) {
+    try {
+      var url = new URL(backendUrl);
+      // The TURN server is accessible via the same Cloudflare Tunnel domain, port 3478
+      var turnHost = url.hostname;
+      // Use the Cloudflare Tunnel URL for TURN if using tunnel, otherwise localhost
+      if (turnHost !== 'localhost' && turnHost !== '127.0.0.1') {
+        ICE_SERVERS.iceServers.push({
+          urls: 'turn:' + turnHost + ':3478?transport=udp',
+          username: 'assistir',
+          credential: 'junt0s-w3brtc'
+        });
+      } else {
+        ICE_SERVERS.iceServers.push({
+          urls: 'turn:localhost:3478?transport=udp',
+          username: 'assistir',
+          credential: 'junt0s-w3brtc'
+        });
+      }
+      console.log('ICE Servers configured:', ICE_SERVERS.iceServers.length, 'servers');
+    } catch (e) {
+      console.warn('Failed to configure TURN server:', e);
+    }
+  }
 
   function fmt(s) { if (isNaN(s)) return '00:00'; var m = Math.floor(s / 60), sec = Math.floor(s % 60); return String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0') }
   function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML }
@@ -131,17 +171,30 @@ async function initApp() {
       modalScreenShareHint.style.display = 'block';
       modalScreenShareHint.textContent = 'Compartilhando: feche este modal e continue navegando';
     } else {
-      modalScreenShareBtn.style.background = '#166534';
-      modalScreenShareText.textContent = isMobile ? '📱 Compartilhar Câmera' : '🖥️ Compartilhar Tela';
-      modalScreenShareHint.style.display = isMobile ? 'block' : 'none';
-      modalScreenShareHint.textContent = isMobile ? 'Em dispositivos móveis, apenas a câmera pode ser compartilhada.' : '';
-    }
-    if (!hasGetDisplayMedia && !hasGetUserMedia) {
-      modalScreenShareBtn.style.display = 'none';
+      var text, hint, bg;
+      if (canScreenShare) {
+        bg = '#166534';
+        text = isMobile ? '📱 Compartilhar Tela' : '🖥️ Compartilhar Tela';
+        hint = isMobile ? 'Android Chrome permite compartilhar a tela do dispositivo com áudio do sistema (Android 10+).' : 'Compartilhe uma janela, aba ou tela inteira. Áudio do sistema disponível.';
+      } else if (canOnlyCamera) {
+        bg = '#b45309';
+        text = '📱 Compartilhar Câmera';
+        hint = isIOS ? 'iPhone/iPad não permite compartilhamento de tela via navegador. Apenas câmera + microfone disponível.' : 'Este navegador não suporta captura de tela. Apenas câmera + microfone disponível.';
+      } else {
+        bg = '#991b1b';
+        text = '❌ Indisponível';
+        hint = 'Seu dispositivo/navegador não suporta compartilhamento de tela ou câmera.';
+      }
+      modalScreenShareBtn.style.background = bg;
+      modalScreenShareText.textContent = text;
       modalScreenShareHint.style.display = 'block';
-      modalScreenShareHint.textContent = 'Seu dispositivo/navegador não suporta compartilhamento de tela ou câmera.';
-    } else {
+      modalScreenShareHint.textContent = hint;
+    }
+    // Always show button when there's at least one capability
+    if (canScreenShare || canOnlyCamera) {
       modalScreenShareBtn.style.display = '';
+    } else {
+      modalScreenShareBtn.style.display = 'none';
     }
   }
 
@@ -150,23 +203,51 @@ async function initApp() {
     if (isScreenSharing) return;
 
     try {
-      if (!isMobile && hasGetDisplayMedia) {
-        // Desktop: capture screen/window/tab
-        screenStream = await navigator.mediaDevices.getDisplayMedia({
+      if (canScreenShare) {
+        // Desktop or Android Chrome: capture screen/window/tab with system audio
+        var displayConstraints = {
           video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
           audio: true
-        });
-      } else if (hasGetUserMedia) {
-        // Mobile or fallback: capture camera + mic
-        var constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }, audio: true };
+        };
+        // On Android, simplify constraints for better compatibility
+        if (isMobile) {
+          displayConstraints = { video: true, audio: true };
+        }
+        screenStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+        // Check if audio track was actually captured
+        var hasAudio = screenStream.getAudioTracks().length > 0;
+        if (!hasAudio && !isMobile) {
+          showToast('Aviso', 'Áudio do sistema não foi capturado. Verifique se marcou "Compartilhar áudio" ao selecionar a tela.');
+        }
+      } else if (canOnlyCamera) {
+        // Fallback: capture camera + mic (iOS, browsers without getDisplayMedia)
+        var constraints = { 
+          video: { 
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 }, 
+            facingMode: 'environment' 
+          }, 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 44100
+          }
+        };
         screenStream = await navigator.mediaDevices.getUserMedia(constraints);
+        showToast('Aviso', 'Compartilhando câmera. Para compartilhar a tela, use o app nativo (Android) ou um navegador compatível.');
       } else {
         showToast('Erro', 'Seu dispositivo não suporta captura de mídia.');
         return;
       }
     } catch (e) {
       console.error('Media capture error:', e);
-      if (e.name !== 'AbortError') {
+      if (e.name === 'NotAllowedError') {
+        showToast('Permissão Negada', 'Você precisa permitir o compartilhamento de tela/câmera.');
+      } else if (e.name === 'NotFoundError') {
+        showToast('Erro', 'Nenhuma tela ou câmera encontrada para compartilhar.');
+      } else if (e.name === 'NotReadableError') {
+        showToast('Erro', 'O dispositivo de captura já está em uso por outro aplicativo.');
+      } else if (e.name !== 'AbortError') {
         showToast('Erro', 'Não foi possível iniciar: ' + (e.message || 'erro desconhecido'));
       }
       return;
@@ -184,8 +265,10 @@ async function initApp() {
     screenSharerName = myNick;
 
     video.srcObject = screenStream;
+    // Mute local preview to avoid echo; remote viewers hear audio via WebRTC
     video.muted = true;
     video.play().catch(function () { });
+    console.log('Screen share started. Video tracks:', screenStream.getVideoTracks().length, 'Audio tracks:', screenStream.getAudioTracks().length);
 
     // Close the media modal after starting
     closeMedia();
