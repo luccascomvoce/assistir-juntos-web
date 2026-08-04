@@ -16,7 +16,7 @@ services:
       - PORT=3000
       - VIDEOS_DIR=/app/videos
       - TOKENS_PATH=/app/data/tokens.json
-      - CORS_ORIGIN=https://seu-usuario.github.io
+      - CORS_ORIGIN=https://luccascomvoce.github.io
 
   tunnel:
     image: cloudflare/cloudflared:latest
