@@ -271,7 +271,11 @@ async function initApp() {
           mediaList.innerHTML = files.map(function (f) {
             var sm = (f.size / 1024 / 1024).toFixed(1);
             var dn = f.filename.replace(/^\d+-/, '');
-            return '<div class="vidRow"><span><svg class="icon icon-sm" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="#a78bfa"/></svg>' + esc(dn) + ' (' + sm + ' MB)</span><button class="btn btn-sm" onclick="selectVid(\'' + esc(f.filename) + '\',\'' + esc(dn) + '\')">▶ Assistir</button></div>';
+            var delBtn = '';
+            if (myNick === 'Admin') {
+              delBtn = '<button class="btn btn-sm" style="background:#dc2626;margin-left:4px" onclick="deleteVid(\'' + esc(f.filename) + '\')" title="Deletar">🗑</button>';
+            }
+            return '<div class="vidRow"><span><svg class="icon icon-sm" viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="#a78bfa"/></svg>' + esc(dn) + ' (' + sm + ' MB)</span><div style="display:flex;gap:4px"><button class="btn btn-sm" onclick="selectVid(\'' + esc(f.filename) + '\',\'' + esc(dn) + '\')">▶ Assistir</button>' + delBtn + '</div></div>';
           }).join('');
         }
       } catch (ex) { mediaList.innerHTML = '<div class="empty">Erro ao processar.</div>' }

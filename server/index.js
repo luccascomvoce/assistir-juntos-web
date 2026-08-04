@@ -71,7 +71,15 @@ const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 * 1024 } })
 
 // ── Middleware ──
 app.use((req, res, next) => {
-  res.set({ "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", Pragma: "no-cache", Expires: "0" });
+  res.set({
+    "Access-Control-Allow-Origin": process.env.CORS_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, x-auth-token",
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    Pragma: "no-cache",
+    Expires: "0",
+  });
+  if (req.method === "OPTIONS") return res.status(204).end();
   next();
 });
 app.use(express.static(path.join(__dirname, "public")));
@@ -166,6 +174,21 @@ app.post("/upload", (req, res) => {
 });
 
 // List videos (agnostic — all videos from both dirs)
+app.delete("/api/videos/:filename", (req, res) => {
+  const token = req.query.token || req.headers["x-auth-token"];
+  if (!token || !validTokens[token] || validTokens[token] !== "Admin") {
+    return res.status(403).json({ error: "Apenas Admin pode deletar." });
+  }
+  const fp = findVideoFile(req.params.filename);
+  if (!fp) return res.status(404).json({ error: "Arquivo não encontrado." });
+  try {
+    fs.unlinkSync(fp);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao deletar." });
+  }
+});
+
 app.get("/api/videos", (req, res) => {
   try {
     const files = [];
