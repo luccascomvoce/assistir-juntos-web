@@ -52,9 +52,10 @@ async function initApp() {
       mediaProgressText = document.getElementById('mediaProgressText'),
       mediaProgressBar = document.getElementById('mediaProgressBar'),
       toastCt = document.getElementById('toastContainer'),
-      screenShareBtn = document.getElementById('screenShareBtn'),
-      screenShareLabel = document.getElementById('screenShareLabel'),
-      liveIndicator = document.getElementById('liveIndicator');
+      liveIndicator = document.getElementById('liveIndicator'),
+      modalScreenShareBtn = document.getElementById('modalScreenShareBtn'),
+      modalScreenShareText = document.getElementById('modalScreenShareText'),
+      modalScreenShareHint = document.getElementById('modalScreenShareHint');
 
   var socket = null;
   var myId = null, myNick = '', currentVideoName = '', chatOpen = false, unread = 0, userListData = [];
@@ -62,6 +63,13 @@ async function initApp() {
   var activeToasts = [];
   var authToken = null;
   var joined = false;
+
+  // ── WebRTC state ──
+  // ── Device detection ──
+  var isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || 
+                 (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
+  var hasGetDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
+  var hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 
   // ── WebRTC state ──
   var isScreenSharing = false;         // true if I am the screen sharer
@@ -83,7 +91,6 @@ async function initApp() {
     ctrlB.classList.add('visible');
     chatToggle.classList.add('visible');
     mediaToggle.classList.add('visible');
-    screenShareBtn.classList.add('visible');
     clearTimeout(hideTimer);
     hideTimer = setTimeout(hideAllUI, 3500);
   }
@@ -91,7 +98,6 @@ async function initApp() {
     ctrlB.classList.remove('visible');
     chatToggle.classList.remove('visible');
     mediaToggle.classList.remove('visible');
-    screenShareBtn.classList.remove('visible');
   }
 
   // ── UI mode switching ──
@@ -103,7 +109,6 @@ async function initApp() {
       progC.style.display = 'none';
       timeD.textContent = 'AO VIVO';
       liveIndicator.classList.add('show');
-      screenShareLabel.classList.add('visible');
       // Clear video src and detach any file source
       video.src = '';
       video.removeAttribute('src');
@@ -114,68 +119,85 @@ async function initApp() {
       ppBtn.style.display = '';
       progC.style.display = '';
       liveIndicator.classList.remove('show');
-      screenShareLabel.classList.remove('visible');
       audSel.disabled = false;
       subSel.disabled = false;
     }
   }
 
-  function updateScreenShareButton() {
+  function updateModalScreenShareButton() {
     if (isScreenSharing) {
-      screenShareBtn.classList.add('active');
-      screenShareBtn.title = 'Parar Compartilhamento';
+      modalScreenShareBtn.style.background = '#dc2626';
+      modalScreenShareText.textContent = '⏹️ Parar Compartilhamento';
+      modalScreenShareHint.style.display = 'block';
+      modalScreenShareHint.textContent = 'Compartilhando: feche este modal e continue navegando';
     } else {
-      screenShareBtn.classList.remove('active');
-      screenShareBtn.title = 'Compartilhar Tela';
+      modalScreenShareBtn.style.background = '#166534';
+      modalScreenShareText.textContent = isMobile ? '📱 Compartilhar Câmera' : '🖥️ Compartilhar Tela';
+      modalScreenShareHint.style.display = isMobile ? 'block' : 'none';
+      modalScreenShareHint.textContent = isMobile ? 'Em dispositivos móveis, apenas a câmera pode ser compartilhada.' : '';
+    }
+    if (!hasGetDisplayMedia && !hasGetUserMedia) {
+      modalScreenShareBtn.style.display = 'none';
+      modalScreenShareHint.style.display = 'block';
+      modalScreenShareHint.textContent = 'Seu dispositivo/navegador não suporta compartilhamento de tela ou câmera.';
+    } else {
+      modalScreenShareBtn.style.display = '';
     }
   }
 
-  // ── WebRTC: Start Screen Share (Sharer side) ──
+  // ── WebRTC: Start Screen/Camera Share ──
   async function startScreenShare() {
     if (isScreenSharing) return;
 
-    // Check browser support
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      showToast('Erro', 'Seu navegador não suporta compartilhamento de tela.');
-      return;
-    }
-
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-        audio: true
-      });
+      if (!isMobile && hasGetDisplayMedia) {
+        // Desktop: capture screen/window/tab
+        screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+          audio: true
+        });
+      } else if (hasGetUserMedia) {
+        // Mobile or fallback: capture camera + mic
+        var constraints = { video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' }, audio: true };
+        screenStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } else {
+        showToast('Erro', 'Seu dispositivo não suporta captura de mídia.');
+        return;
+      }
     } catch (e) {
-      console.error('getDisplayMedia error:', e);
+      console.error('Media capture error:', e);
       if (e.name !== 'AbortError') {
-        showToast('Erro', 'Não foi possível iniciar o compartilhamento: ' + e.message);
+        showToast('Erro', 'Não foi possível iniciar: ' + (e.message || 'erro desconhecido'));
       }
       return;
     }
 
-    // Listen for stream end (user clicked "stop sharing" in browser UI)
     screenStream.getVideoTracks()[0].addEventListener('ended', function () {
       stopScreenShare();
     });
 
-    // Notify server
     socket.emit('startScreenShare');
 
     isScreenSharing = true;
-    updateScreenShareButton();
+    updateModalScreenShareButton();
     setMediaMode('screen');
     screenSharerName = myNick;
 
-    // Show local preview
     video.srcObject = screenStream;
-    video.muted = true; // Don't echo local audio
+    video.muted = true;
     video.play().catch(function () { });
 
-    // Create peer connections for each existing peer in room
-    // We do this when we get the userList; for now, set up for new peers via events
+    // Close the media modal after starting
+    closeMedia();
 
-    // We'll create peer connections reactively: when a new user joins (we get userList updates),
-    // or when we receive a webrtc-offer, we handle accordingly.
+    // Create peer connections for existing peers
+    if (userListData.length > 0) {
+      userListData.forEach(function (u) {
+        if (u.id !== myId && !peerConnections[u.id]) {
+          createPeerConnectionForViewer(u.id);
+        }
+      });
+    }
   }
 
   // ── WebRTC: Stop Screen Share ──
@@ -195,7 +217,7 @@ async function initApp() {
     isScreenSharing = false;
     screenSharerId = null;
     screenSharerName = null;
-    updateScreenShareButton();
+    updateModalScreenShareButton();
     setMediaMode('file');
 
     // Clear video
@@ -495,7 +517,6 @@ async function initApp() {
   ctrlB.addEventListener('mouseleave', function () { hideTimer = setTimeout(hideAllUI, 1200) });
   chatToggle.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
   mediaToggle.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
-  screenShareBtn.addEventListener('mouseenter', function () { clearTimeout(hideTimer) });
   document.addEventListener('mousemove', function (e) { if (document.fullscreenElement) showAllUI(); });
 
   // ── Controls ──
@@ -516,14 +537,13 @@ async function initApp() {
     else if (e.key === 'ArrowRight' && currentMediaType !== 'screen') { iSeek(Math.min(video.duration || 0, video.currentTime + 5)) }
   });
 
-  // ── Screen Share Button ──
-  screenShareBtn.addEventListener('click', function () {
+  // ── Modal Screen Share Button ──
+  modalScreenShareBtn.addEventListener('click', function () {
     if (isScreenSharing) {
       stopScreenShare();
     } else {
       startScreenShare();
     }
-    showAllUI();
   });
 
   // ── Chat ──
@@ -554,7 +574,7 @@ async function initApp() {
   function dismissAllToasts() { while (activeToasts.length) { var t = activeToasts.shift(); if (t && t.parentNode) t.parentNode.removeChild(t) } }
 
   // ── Media Modal ──
-  function openMedia() { mediaOverlay.classList.add('open'); loadMediaList(); showAllUI() }
+  function openMedia() { mediaOverlay.classList.add('open'); loadMediaList(); updateModalScreenShareButton(); showAllUI() }
   function closeMedia() { mediaOverlay.classList.remove('open') }
   mediaToggle.addEventListener('click', function () { openMedia(); showAllUI() });
   mediaClose.addEventListener('click', closeMedia);
