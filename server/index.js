@@ -314,7 +314,8 @@ io.on("connection", (socket) => {
     rooms[r].paused = false;
     rooms[r].currentVideo = null;
     rooms[r].currentVideoName = "Tela de " + socket.nickname;
-    io.to(r).emit("screenShareStarted", {
+    // Exclude sender: they already handle their own screen share locally
+    socket.to(r).emit("screenShareStarted", {
       screenSharer: socket.id,
       screenSharerName: socket.nickname,
     });
@@ -334,7 +335,8 @@ io.on("connection", (socket) => {
     rooms[r].currentVideoName = "Nenhum vídeo selecionado";
     rooms[r].paused = true;
     rooms[r].currentTime = 0;
-    io.to(r).emit("screenShareStopped", { screenSharer: socket.id });
+    // Exclude sender: sender already cleaned up locally
+    socket.to(r).emit("screenShareStopped", { screenSharer: socket.id });
     io.to(r).emit("chatMessage", { id: null, from: "Sistema", text: socket.nickname + " encerrou o compartilhamento de tela.", system: true });
   });
 
@@ -342,9 +344,9 @@ io.on("connection", (socket) => {
   socket.on("webrtc-offer", (data) => {
     const r = socket.currentRoom;
     if (!r) return;
-    // Forward offer to a specific peer, or broadcast to all except sender
+    // Forward offer to a specific peer using io.to(socketId) for direct delivery
     if (data.target) {
-      socket.to(data.target).emit("webrtc-offer", { from: socket.id, sdp: data.sdp });
+      io.to(data.target).emit("webrtc-offer", { from: socket.id, sdp: data.sdp });
     } else {
       socket.to(r).emit("webrtc-offer", { from: socket.id, sdp: data.sdp });
     }
@@ -354,7 +356,7 @@ io.on("connection", (socket) => {
     const r = socket.currentRoom;
     if (!r) return;
     if (data.target) {
-      socket.to(data.target).emit("webrtc-answer", { from: socket.id, sdp: data.sdp });
+      io.to(data.target).emit("webrtc-answer", { from: socket.id, sdp: data.sdp });
     } else {
       socket.to(r).emit("webrtc-answer", { from: socket.id, sdp: data.sdp });
     }
@@ -364,7 +366,7 @@ io.on("connection", (socket) => {
     const r = socket.currentRoom;
     if (!r) return;
     if (data.target) {
-      socket.to(data.target).emit("webrtc-ice-candidate", { from: socket.id, candidate: data.candidate });
+      io.to(data.target).emit("webrtc-ice-candidate", { from: socket.id, candidate: data.candidate });
     } else {
       socket.to(r).emit("webrtc-ice-candidate", { from: socket.id, candidate: data.candidate });
     }

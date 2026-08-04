@@ -144,14 +144,16 @@ async function initApp() {
   function setMediaMode(mode) {
     currentMediaType = mode;
     if (mode === 'screen') {
+      // Pause any playing video and detach its source
+      video.pause();
+      video.src = '';
+      video.removeAttribute('src');
+      video.srcObject = null;
       // Disable play/pause/seek — live stream
       ppBtn.style.display = 'none';
       progC.style.display = 'none';
       timeD.textContent = 'AO VIVO';
       liveIndicator.classList.add('show');
-      // Clear video src and detach any file source
-      video.src = '';
-      video.removeAttribute('src');
       video.controls = false;
       audSel.disabled = true;
       subSel.disabled = true;
