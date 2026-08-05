@@ -1,46 +1,96 @@
 # ── Deploy Script for Assistir Juntos ──
-Write-Host "🚀 Iniciando deploy..." -ForegroundColor Cyan
+# Pipeline completo: rebuild container → extract tunnel URL → commit & push to GitHub
+param(
+    [switch]$SkipGit = $false
+)
 
-# Stop and remove old containers
-Write-Host "Parando containers antigos..." -ForegroundColor Yellow
+$ErrorActionPreference = "Stop"
+$startTime = Get-Date
+
+Write-Host ""
+Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║   🚀 DEPLOY - ASSISTIR JUNTOS       ║" -ForegroundColor Cyan
+Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
+
+# ── Etapa 1: Parar containers antigos ──
+Write-Host "[1/5] Parando containers antigos..." -ForegroundColor Yellow
 docker-compose down --remove-orphans 2>$null
+Write-Host "       Containers parados." -ForegroundColor Green
 
-# Build and start
-Write-Host "Construindo e iniciando containers..." -ForegroundColor Yellow
+# ── Etapa 2: Build e start ──
+Write-Host "[2/5] Construindo imagem e iniciando containers..." -ForegroundColor Yellow
 docker-compose up -d --build
+Write-Host "       Build concluído, containers iniciados." -ForegroundColor Green
 
-# Wait for services
-Write-Host "Aguardando serviços iniciarem..." -ForegroundColor Yellow
+# ── Etapa 3: Aguardar túnel Cloudflare ──
+Write-Host "[3/5] Aguardando túnel Cloudflare (12s)..." -ForegroundColor Yellow
 Start-Sleep -Seconds 12
 
-# Extract tunnel URL
-Write-Host "Extraindo URL do túnel..." -ForegroundColor Yellow
-$logs = docker logs assistir-juntos-tunnel 2>&1 | Out-String
-$url = [regex]::Match($logs, 'https://[a-z0-9.-]+\.trycloudflare\.com').Value
+# Extrair URL do túnel (tenta múltiplas vezes)
+$url = $null
+$maxRetries = 5
+for ($i = 0; $i -lt $maxRetries; $i++) {
+    $logs = docker logs assistir-juntos-tunnel 2>&1 | Out-String
+    $url = [regex]::Match($logs, 'https://[a-z0-9.-]+\.trycloudflare\.com').Value
+    if ($url) { break }
+    Write-Host "       Tentativa $($i+1)/$maxRetries - aguardando túnel..." -ForegroundColor Gray
+    Start-Sleep -Seconds 5
+}
 
-if ($url) {
-    Write-Host ""
-    Write-Host "══════════════════════════════════════" -ForegroundColor Green
-    Write-Host "  ✅ Deploy concluído!" -ForegroundColor Green
-    Write-Host "  Link: $url" -ForegroundColor White
-    Write-Host "══════════════════════════════════════" -ForegroundColor Green
-    Write-Host ""
+if (-not $url) {
+    Write-Host "❌ ERRO: URL do túnel não encontrada após $maxRetries tentativas." -ForegroundColor Red
+    Write-Host "   Verifique: docker logs assistir-juntos-tunnel" -ForegroundColor Gray
+    exit 1
+}
 
-    # Save to frontend config
-    $config = @{ url = $url } | ConvertTo-Json -Compress
-    Set-Content -Path "docs\tunnel-url.json" -Value $config
-    Write-Host "tunnel-url.json atualizado" -ForegroundColor Gray
+Write-Host "       Túnel detectado: $url" -ForegroundColor Green
 
-    # Show tokens
-    Write-Host ""
-    Write-Host "Tokens de acesso:" -ForegroundColor Cyan
-    if (Test-Path "data\tokens.json") {
-        $tokens = Get-Content "data\tokens.json" | ConvertFrom-Json
-        $tokens.PSObject.Properties | ForEach-Object {
-            Write-Host "  $($_.Name) → token: $($_.Value)" -ForegroundColor White
-        }
+# ── Etapa 4: Salvar URL e mostrar tokens ──
+Write-Host "[4/5] Atualizando tunnel-url.json..." -ForegroundColor Yellow
+$config = @{ url = $url } | ConvertTo-Json -Compress
+Set-Content -Path "docs\tunnel-url.json" -Value $config
+Write-Host "       Salvo em docs/tunnel-url.json" -ForegroundColor Green
+
+# Mostrar tokens
+Write-Host ""
+Write-Host "       Tokens de acesso:" -ForegroundColor Cyan
+if (Test-Path "data\tokens.json") {
+    $tokens = Get-Content "data\tokens.json" | ConvertFrom-Json
+    $tokens.PSObject.Properties | ForEach-Object {
+        Write-Host "         $($_.Name) → token: $($_.Value)" -ForegroundColor White
     }
 } else {
-    Write-Host "⚠️  Tunnel URL não encontrada. Verifique os logs:" -ForegroundColor Red
-    Write-Host "docker logs assistir-juntos-tunnel" -ForegroundColor Gray
+    Write-Host "         Nenhum token configurado." -ForegroundColor Gray
 }
+
+# ── Etapa 5: Git commit e push ──
+if ($SkipGit) {
+    Write-Host "[5/5] Git SKIP (--SkipGit ativado)" -ForegroundColor DarkYellow
+} else {
+    Write-Host "[5/5] Commit e push para GitHub..." -ForegroundColor Yellow
+    
+    $hasChanges = git status --porcelain 2>&1
+    if ($hasChanges) {
+        git add docs/tunnel-url.json 2>&1 | Out-Null
+        $commitMsg = "deploy: atualiza tunnel URL ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))"
+        git commit -m $commitMsg 2>&1 | Out-Null
+        Write-Host "       Commit: $commitMsg" -ForegroundColor Gray
+        
+        git push origin main 2>&1 | Out-Null
+        Write-Host "       Push para origin/main concluído." -ForegroundColor Green
+        Write-Host "       GitHub Pages fará o deploy automaticamente em ~1-2 min." -ForegroundColor Gray
+    } else {
+        Write-Host "       Nenhuma alteração para commitar (URL já está atualizada)." -ForegroundColor Gray
+    }
+}
+
+# ── Resumo final ──
+$elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
+Write-Host ""
+Write-Host "══════════════════════════════════════" -ForegroundColor Green
+Write-Host "  ✅ DEPLOY CONCLUÍDO (${elapsed}s)" -ForegroundColor Green
+Write-Host "  🔗 $url" -ForegroundColor White
+Write-Host "  🌐 https://luccascomvoce.github.io/assistir-juntos-web" -ForegroundColor White
+Write-Host "══════════════════════════════════════" -ForegroundColor Green
+Write-Host ""
