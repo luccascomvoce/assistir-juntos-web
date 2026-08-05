@@ -74,8 +74,9 @@ async function initApp() {
   var isAndroidChrome = isAndroid && /Chrome/i.test(navigator.userAgent) && !/Edge/i.test(navigator.userAgent);
   var hasGetDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   var hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  // Android Chrome 94+ supports getDisplayMedia for screen sharing
-  var canScreenShare = hasGetDisplayMedia && (!isMobile || (isAndroidChrome && !isIOS));
+  // Chrome 94+, Edge, Samsung Internet, and Firefox on Android all support getDisplayMedia
+  // Strategy: if the browser exposes getDisplayMedia, it can screen share (regardless of OS/Browser detection)
+  var canScreenShare = hasGetDisplayMedia;
   var canOnlyCamera = !canScreenShare && hasGetUserMedia;
 
   // ── WebRTC state ──
@@ -104,14 +105,23 @@ async function initApp() {
       var turnHost = url.hostname;
       // Use the Cloudflare Tunnel URL for TURN if using tunnel, otherwise localhost
       if (turnHost !== 'localhost' && turnHost !== '127.0.0.1') {
+        // Use the same Cloudflare Tunnel domain with port 3478 for TURN
+        // TCP is critical: Cloudflare Tunnel forwards only TCP (tcp://localhost:3478)
+        // UDP is also included for direct LAN/WiFi connectivity (bypasses tunnel when possible)
         ICE_SERVERS.iceServers.push({
-          urls: 'turn:' + turnHost + ':3478?transport=udp',
+          urls: [
+            'turn:' + turnHost + ':3478?transport=tcp',
+            'turn:' + turnHost + ':3478?transport=udp'
+          ],
           username: 'assistir',
           credential: 'junt0s-w3brtc'
         });
       } else {
         ICE_SERVERS.iceServers.push({
-          urls: 'turn:localhost:3478?transport=udp',
+          urls: [
+            'turn:localhost:3478?transport=tcp',
+            'turn:localhost:3478?transport=udp'
+          ],
           username: 'assistir',
           credential: 'junt0s-w3brtc'
         });

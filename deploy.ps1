@@ -66,7 +66,7 @@ if (Test-Path "data\tokens.json") {
 
 # ── Etapa 5: Git commit e push ──
 if ($SkipGit) {
-    Write-Host "[5/5] Git SKIP (--SkipGit ativado)" -ForegroundColor DarkYellow
+    Write-Host "[5/5] Git SKIP (-SkipGit ativado)" -ForegroundColor DarkYellow
 } else {
     Write-Host "[5/5] Commit e push para GitHub..." -ForegroundColor Yellow
     
