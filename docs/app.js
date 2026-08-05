@@ -56,7 +56,10 @@ async function initApp() {
       liveIndicator = document.getElementById('liveIndicator'),
       modalScreenShareBtn = document.getElementById('modalScreenShareBtn'),
       modalScreenShareText = document.getElementById('modalScreenShareText'),
-      modalScreenShareHint = document.getElementById('modalScreenShareHint');
+      modalScreenShareHint = document.getElementById('modalScreenShareHint'),
+      micBtn = document.getElementById('micBtn'),
+      videoBtn = document.getElementById('videoBtn'),
+      cameraCircles = document.getElementById('cameraCircles');
 
   var socket = null;
   var myId = null, myNick = '', currentVideoName = '', chatOpen = false, unread = 0, userListData = [];
@@ -96,6 +99,19 @@ async function initApp() {
   var currentMediaType = 'file';
   var screenSharerId = null;
   var screenSharerName = null;
+
+  // ── Mic state ──
+  var micMuted = false;
+  var micStream = null;
+  var micAudioTrack = null;
+
+  // ── Camera state ──
+  var cameraActive = false;
+  var cameraStream = null;
+  var cameraPeerMap = {}; // targetId -> RTCPeerConnection
+
+  // ── Remote camera feeds ──
+  var remoteCameras = {}; // userId -> { stream, muted }
 
   // ICE Servers
   var ICE_SERVERS = { 
@@ -178,9 +194,6 @@ async function initApp() {
   }
 
   // ── Update the screen share button in the media modal ──
-  // Always show the button if any media capture is available.
-  // Label is always "Share Screen" — clicking will try getDisplayMedia first,
-  // then fall back to getUserMedia (camera) automatically.
   function updateModalScreenShareButton() {
     if (isScreenSharing) {
       modalScreenShareBtn.style.background = '#dc2626';
@@ -288,8 +301,6 @@ async function initApp() {
   }
 
   // ── Start sharing (screen or camera) ──
-  // Uses getDisplayMedia for screen share (same API as Google Meet), with automatic
-  // fallback to getUserMedia (camera) on any failure.
   async function startScreenShare() {
     if (isScreenSharing) return;
 
@@ -297,18 +308,14 @@ async function initApp() {
     var shareType = 'screen';
 
     // Step 1: Try screen sharing via getDisplayMedia
-    // Minimal constraints — exactly what Google Meet uses. On Android avoid any
-    // width/height/frameRate that may cause getDisplayMedia to fail silently.
     try {
       var dm = navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia;
       if (typeof dm === 'function') {
-        // Minimal constraints, especially for mobile.
         var gdmOpts = isMobile ? { video: true } : { video: true, audio: true };
         stream = await dm.call(navigator.mediaDevices, gdmOpts);
         if (stream && stream.getVideoTracks().length > 0) {
           console.log('[ScreenShare] getDisplayMedia OK. Video tracks:', stream.getVideoTracks().length);
         } else {
-          // got a stream but no video — discard and fall through to camera
           if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
           stream = null;
           console.warn('[ScreenShare] getDisplayMedia returned no video track');
@@ -318,9 +325,7 @@ async function initApp() {
       }
     } catch (e) {
       console.error('[ScreenShare] getDisplayMedia error:', e.name, e.message || e);
-      // AbortError = user cancelled the picker — just stop
       if (e.name === 'AbortError') return;
-      // Any other error — fall through to camera below
       stream = null;
     }
 
@@ -468,12 +473,268 @@ async function initApp() {
   }
 
   function handleReceivedIceCandidate(data) {
-    var pc = peerConnections[data.from] || receivingPeer;
+    var pc = peerConnections[data.from] || receivingPeer || cameraPeerMap[data.from];
     if (!pc) return;
     try {
       pc.addIceCandidate(new RTCIceCandidate(data.candidate))
         .catch(function (err) { console.error('Error adding ICE candidate:', err); });
     } catch (e) { console.error('ICE candidate error:', e); }
+  }
+
+  // ── Camera Circle rendering ──
+  function updateCameraCircle(userId, nickname, hasCamera, isMuted) {
+    if (hasCamera) {
+      if (!remoteCameras[userId]) {
+        remoteCameras[userId] = { nickname: nickname, muted: false };
+      }
+      remoteCameras[userId].muted = !!isMuted;
+    } else {
+      delete remoteCameras[userId];
+    }
+    renderCameraCircles();
+  }
+
+  function renderCameraCircles() {
+    var userIds = Object.keys(remoteCameras);
+    if (userIds.length === 0) { cameraCircles.innerHTML = ''; return; }
+
+    var existingEls = {};
+    cameraCircles.querySelectorAll('.camera-circle').forEach(function (el) {
+      existingEls[el.getAttribute('data-userid')] = el;
+    });
+
+    cameraCircles.innerHTML = '';
+    userIds.forEach(function (uid) {
+      var cam = remoteCameras[uid];
+      var el;
+      if (existingEls[uid] && existingEls[uid].videoEl && existingEls[uid].videoEl.srcObject === cam.stream) {
+        el = existingEls[uid];
+      } else {
+        el = document.createElement('div');
+        el.className = 'camera-circle';
+        el.setAttribute('data-userid', uid);
+        var vid = document.createElement('video');
+        vid.autoplay = true;
+        vid.playsinline = true;
+        vid.muted = true;
+        vid.setAttribute('playsinline', '');
+        if (cam.stream) { vid.srcObject = cam.stream; }
+        vid.addEventListener('loadedmetadata', function () { vid.play().catch(function () {}); });
+        el.appendChild(vid);
+        el.videoEl = vid;
+        var label = document.createElement('div');
+        label.className = 'cam-label';
+        label.textContent = cam.nickname;
+        el.appendChild(label);
+        var mutedIcon = document.createElement('div');
+        mutedIcon.className = 'cam-muted-icon';
+        mutedIcon.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24"><line x1="1" y1="1" x2="23" y2="23" stroke="#fff" stroke-width="3" stroke-linecap="round"/><path d="M3 18v-6a9 9 0 0 1 18 0v6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>';
+        el.appendChild(mutedIcon);
+        el.mutedIconEl = mutedIcon;
+      }
+
+      // Update stream if changed
+      if (cam.stream && el.videoEl && el.videoEl.srcObject !== cam.stream) {
+        el.videoEl.srcObject = cam.stream;
+        el.videoEl.play().catch(function () {});
+      }
+
+      // Muted icon
+      if (el.mutedIconEl) {
+        if (cam.muted) { el.mutedIconEl.classList.add('show'); }
+        else { el.mutedIconEl.classList.remove('show'); }
+      }
+
+      // Animation
+      el.classList.add('show');
+      cameraCircles.appendChild(el);
+    });
+  }
+
+  // ── Mic Toggle ──
+  async function toggleMic() {
+    if (micMuted) {
+      // Unmute
+      if (micAudioTrack) {
+        micAudioTrack.enabled = true;
+      }
+      micMuted = false;
+      micBtn.classList.remove('muted');
+      micBtn.title = 'Microfone ligado';
+      socket.emit('micStateChanged', { muted: false });
+      console.log('[Mic] Unmuted');
+    } else {
+      if (!micStream) {
+        // First time — acquire mic
+        try {
+          micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+          if (micStream.getAudioTracks().length > 0) {
+            micAudioTrack = micStream.getAudioTracks()[0];
+          }
+          console.log('[Mic] Stream acquired');
+        } catch (e) {
+          console.error('[Mic] Error:', e);
+          if (e.name === 'NotAllowedError') {
+            showToast('Microfone', 'Permissao de microfone negada.');
+          }
+          return;
+        }
+      }
+      // Mute
+      if (micAudioTrack) {
+        micAudioTrack.enabled = false;
+      }
+      micMuted = true;
+      micBtn.classList.add('muted');
+      micBtn.title = 'Microfone desligado';
+      socket.emit('micStateChanged', { muted: true });
+      console.log('[Mic] Muted');
+    }
+  }
+
+  // Listen for remote mic state
+  socket && socket.on && socket.on('micStateChanged', function (data) {
+    // Update the camera circle muted icon for this user
+    if (remoteCameras[data.id]) {
+      remoteCameras[data.id].muted = data.muted;
+      renderCameraCircles();
+    }
+    if (data.muted) {
+      showToast(data.nickname, '🔇 Microfone desligado');
+    } else {
+      showToast(data.nickname, '🎤 Microfone ligado');
+    }
+  });
+
+  // ── Camera Toggle ──
+  async function toggleCamera() {
+    if (cameraActive) {
+      // Stop camera
+      stopMyCamera();
+    } else {
+      // Start camera
+      await startMyCamera();
+    }
+  }
+
+  async function startMyCamera() {
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
+      if (!cameraStream || cameraStream.getVideoTracks().length === 0) {
+        showToast('Camera', 'Nao foi possivel acessar a camera.');
+        return;
+      }
+      cameraActive = true;
+      videoBtn.classList.add('active');
+      videoBtn.title = 'Videochamada ativa';
+      socket.emit('cameraStateChanged', { active: true });
+      console.log('[Camera] Started');
+
+      // Create peer connections for all existing users
+      if (userListData.length > 0) {
+        userListData.forEach(function (u) {
+          if (u.id !== myId && !cameraPeerMap[u.id]) {
+            createCameraPeerConnection(u.id);
+          }
+        });
+      }
+    } catch (e) {
+      console.error('[Camera] Error:', e);
+      if (e.name === 'NotAllowedError') {
+        showToast('Camera', 'Permissao de camera negada.');
+      } else if (e.name !== 'AbortError') {
+        showToast('Camera', 'Erro: ' + (e.message || e.name));
+      }
+    }
+  }
+
+  function stopMyCamera() {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(function (t) { t.stop(); });
+      cameraStream = null;
+    }
+    Object.values(cameraPeerMap).forEach(function (pc) { pc.close(); });
+    cameraPeerMap = {};
+    cameraActive = false;
+    videoBtn.classList.remove('active');
+    videoBtn.title = 'Videochamada';
+    socket.emit('cameraStateChanged', { active: false });
+    console.log('[Camera] Stopped');
+
+    // Also clean up mic if we had one from camera stream
+    if (micStream && micStream.getAudioTracks()[0] === micAudioTrack) {
+      micStream.getTracks().forEach(function (t) { t.stop(); });
+      micStream = null;
+      micAudioTrack = null;
+      micMuted = false;
+      micBtn.classList.remove('muted');
+      micBtn.title = 'Microfone';
+      socket.emit('micStateChanged', { muted: false });
+    }
+  }
+
+  function createCameraPeerConnection(targetId) {
+    if (!cameraStream || cameraPeerMap[targetId]) return;
+    var pc = new RTCPeerConnection(ICE_SERVERS);
+    cameraStream.getTracks().forEach(function (track) { pc.addTrack(track, cameraStream); });
+    pc.onicecandidate = function (e) {
+      if (e.candidate) { socket.emit('webrtc-ice-candidate', { target: targetId, candidate: e.candidate }); }
+    };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        pc.close();
+        delete cameraPeerMap[targetId];
+      }
+    };
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () { socket.emit('camera-webrtc-offer', { target: targetId, sdp: pc.localDescription }); })
+      .catch(function (err) { console.error('[Camera] Error creating offer:', err); });
+    cameraPeerMap[targetId] = pc;
+  }
+
+  function handleCameraOffer(data) {
+    var pc = new RTCPeerConnection(ICE_SERVERS);
+    pc.ontrack = function (event) {
+      if (event.streams && event.streams[0]) {
+        var stream = event.streams[0];
+        if (!remoteCameras[data.from]) {
+          remoteCameras[data.from] = { stream: stream, nickname: data.nickname || 'User', muted: false };
+        } else {
+          remoteCameras[data.from].stream = stream;
+        }
+        renderCameraCircles();
+        console.log('[Camera] Received remote stream from', data.from);
+      }
+    };
+    pc.onicecandidate = function (e) {
+      if (e.candidate) { socket.emit('webrtc-ice-candidate', { target: data.from, candidate: e.candidate }); }
+    };
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        pc.close();
+        delete remoteCameras[data.from];
+        renderCameraCircles();
+      }
+    };
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+      .then(function () { return pc.createAnswer(); })
+      .then(function (answer) { return pc.setLocalDescription(answer); })
+      .then(function () { socket.emit('camera-webrtc-answer', { target: data.from, sdp: pc.localDescription }); })
+      .catch(function (err) { console.error('[Camera] Error handling offer:', err); });
+    // Store the PC so we can add ICE candidates
+    // Use cameraPeerMap temporarily for the receiving side
+    cameraPeerMap[data.from] = pc;
+  }
+
+  function handleCameraAnswer(data) {
+    var pc = cameraPeerMap[data.from];
+    if (!pc) return;
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
+      .catch(function (err) { console.error('[Camera] Error setting remote description:', err); });
   }
 
   // ── Connect with auth ──
@@ -569,6 +830,19 @@ async function initApp() {
           if (userIds.indexOf(pid) === -1) { peerConnections[pid].close(); delete peerConnections[pid]; }
         });
       }
+      // Camera peer connections
+      if (cameraActive && cameraStream) {
+        var camUserIds = userListData.map(function (u) { return u.id; });
+        camUserIds.forEach(function (uid) {
+          if (uid !== myId && !cameraPeerMap[uid]) { createCameraPeerConnection(uid); }
+        });
+        Object.keys(cameraPeerMap).forEach(function (pid) {
+          if (camUserIds.indexOf(pid) === -1) {
+            cameraPeerMap[pid].close();
+            delete cameraPeerMap[pid];
+          }
+        });
+      }
     });
 
     socket.on('webrtc-offer', function (data) {
@@ -578,6 +852,14 @@ async function initApp() {
 
     socket.on('webrtc-answer', function (data) { handleReceivedAnswer(data); });
     socket.on('webrtc-ice-candidate', function (data) { handleReceivedIceCandidate(data); });
+
+    // Camera WebRTC events
+    socket.on('camera-webrtc-offer', function (data) {
+      handleCameraOffer(data);
+    });
+    socket.on('camera-webrtc-answer', function (data) {
+      handleCameraAnswer(data);
+    });
 
     socket.on('screenShareStarted', function (data) {
       screenSharerId = data.screenSharer;
@@ -606,6 +888,23 @@ async function initApp() {
       if (msg.id === myId) return;
       addChatMsg(msg.from, msg.text, msg.system);
       if (!chatOpen) showToast(msg.from, msg.text);
+    });
+
+    // Re-register mic/camera event listeners since socket is recreated
+    socket.on('micStateChanged', function (data) {
+      if (remoteCameras[data.id]) {
+        remoteCameras[data.id].muted = data.muted;
+        renderCameraCircles();
+      }
+      if (data.muted) {
+        showToast(data.nickname, '🔇 Microfone desligado');
+      } else {
+        showToast(data.nickname, '🎤 Microfone ligado');
+      }
+    });
+
+    socket.on('cameraStateChanged', function (data) {
+      updateCameraCircle(data.id, data.nickname, data.active, false);
     });
   }
 
@@ -709,6 +1008,33 @@ async function initApp() {
   chatToggle.addEventListener('click', function () { chatOpen ? closeChat() : openChat(); showAllUI() });
   chatClose.addEventListener('click', function () { closeChat(); showAllUI() });
 
+  // ── Swipe gesture to close chat panel ──
+  (function setupChatSwipe() {
+    var touchStartX = 0, touchStartY = 0, hasSwipe = false, swipeThreshold = 60;
+    chatPanel.addEventListener('touchstart', function (e) {
+      if (!chatOpen) return;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      hasSwipe = false;
+    }, { passive: true });
+    chatPanel.addEventListener('touchmove', function (e) {
+      if (!chatOpen) return;
+      var dx = e.touches[0].clientX - touchStartX;
+      var dy = e.touches[0].clientY - touchStartY;
+      // Only horizontal swipe to the right
+      if (dx > swipeThreshold && Math.abs(dx) > Math.abs(dy)) {
+        hasSwipe = true;
+      }
+    }, { passive: true });
+    chatPanel.addEventListener('touchend', function (e) {
+      if (hasSwipe && chatOpen) {
+        closeChat();
+        showAllUI();
+      }
+      hasSwipe = false;
+    });
+  })();
+
   function addChatMsg(from, txt, sys) {
     var d = document.createElement('div'); d.className = 'msg' + (sys ? ' system' : '');
     if (!sys && from === myNick) d.className += ' own';
@@ -784,6 +1110,12 @@ async function initApp() {
     resetTrackState();
     closeMedia();
   };
+
+  // ── Mic button ──
+  micBtn.addEventListener('click', toggleMic);
+
+  // ── Video button ──
+  videoBtn.addEventListener('click', toggleCamera);
 
   // ── Pre-fill token from URL ──
   var urlParams = new URLSearchParams(window.location.search);
