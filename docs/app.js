@@ -65,21 +65,16 @@ async function initApp() {
   var authToken = null;
   var joined = false;
 
-  // ── WebRTC state ──
   // ── Device detection ──
   var isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || 
                  (navigator.maxTouchPoints > 1 && window.innerWidth < 1024);
   var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   var isAndroid = /Android/i.test(navigator.userAgent);
-  var isAndroidChrome = isAndroid && /Chrome/i.test(navigator.userAgent) && !/Edge/i.test(navigator.userAgent);
   var hasGetDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   var hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  // All Chromium browsers (Chrome 94+, Edge, Samsung Internet, Brave, etc.) on Android support getDisplayMedia.
-  // Strategy: if the browser exposes getDisplayMedia, it can screen share.
   var canScreenShare = hasGetDisplayMedia;
   var canOnlyCamera = !canScreenShare && hasGetUserMedia;
 
-  // Diagnostic logging for screen share capability detection
   console.log('[Capabilities]', JSON.stringify({
     userAgent: navigator.userAgent,
     isMobile: isMobile,
@@ -94,34 +89,26 @@ async function initApp() {
   }));
 
   // ── WebRTC state ──
-  var isScreenSharing = false;         // true if I am the screen sharer
-  var screenStream = null;             // my local MediaStream when sharing
-  var peerConnections = {};            // map of peerId → RTCPeerConnection (only used by sharer)
-  var receivingPeer = null;            // RTCPeerConnection used by viewers to receive
-  var currentMediaType = 'file';       // 'file' or 'screen'
-  var screenSharerId = null;           // socket id of current screen sharer
-  var screenSharerName = null;         // name of current screen sharer
+  var isScreenSharing = false;
+  var screenStream = null;
+  var peerConnections = {};
+  var receivingPeer = null;
+  var currentMediaType = 'file';
+  var screenSharerId = null;
+  var screenSharerName = null;
 
-  // ICE Servers: STUN (Google) + TURN (local coturn via Cloudflare Tunnel)
-  // The TURN server URL is dynamically set when tunnel URL is loaded
+  // ICE Servers
   var ICE_SERVERS = { 
     iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      // TURN server will be added dynamically after tunnel URL is known
+      { urls: 'stun:stun.l.google.com:19302' }
     ] 
   };
 
-  // Add local TURN server to ICE servers after backend URL is known
   function configureICEServers(backendUrl) {
     try {
       var url = new URL(backendUrl);
-      // The TURN server is accessible via the same Cloudflare Tunnel domain, port 3478
       var turnHost = url.hostname;
-      // Use the Cloudflare Tunnel URL for TURN if using tunnel, otherwise localhost
       if (turnHost !== 'localhost' && turnHost !== '127.0.0.1') {
-        // Use the same Cloudflare Tunnel domain with port 3478 for TURN
-        // TCP is critical: Cloudflare Tunnel forwards only TCP (tcp://localhost:3478)
-        // UDP is also included for direct LAN/WiFi connectivity (bypasses tunnel when possible)
         ICE_SERVERS.iceServers.push({
           urls: [
             'turn:' + turnHost + ':3478?transport=tcp',
@@ -168,12 +155,10 @@ async function initApp() {
   function setMediaMode(mode) {
     currentMediaType = mode;
     if (mode === 'screen') {
-      // Pause any playing video and detach its source
       video.pause();
       video.src = '';
       video.removeAttribute('src');
       video.srcObject = null;
-      // Disable play/pause/seek — live stream
       ppBtn.style.display = 'none';
       progC.style.display = 'none';
       timeD.textContent = 'AO VIVO';
@@ -192,6 +177,10 @@ async function initApp() {
     }
   }
 
+  // ── Update the screen share button in the media modal ──
+  // Always show the button if any media capture is available.
+  // Label is always "Share Screen" — clicking will try getDisplayMedia first,
+  // then fall back to getUserMedia (camera) automatically.
   function updateModalScreenShareButton() {
     if (isScreenSharing) {
       modalScreenShareBtn.style.background = '#dc2626';
@@ -199,42 +188,23 @@ async function initApp() {
       modalScreenShareHint.style.display = 'block';
       modalScreenShareHint.textContent = 'Compartilhando: feche este modal e continue navegando';
     } else {
-      var text, hint, bg;
-      if (canScreenShare) {
-        bg = '#166534';
-        text = isMobile ? '📱 Compartilhar Tela' : '🖥️ Compartilhar Tela';
-        hint = isMobile ? 'Android Chrome permite compartilhar a tela do dispositivo com áudio do sistema (Android 10+).' : 'Compartilhe uma janela, aba ou tela inteira. Áudio do sistema disponível.';
-      } else if (canOnlyCamera) {
-        bg = '#b45309';
-        text = '📱 Compartilhar Câmera';
-        if (isIOS) {
-          hint = 'iPhone/iPad não permite compartilhamento de tela via navegador. Apenas câmera + microfone disponível.';
-        } else {
-          hint = 'Captura de tela indisponível neste navegador. Apenas câmera + microfone.';
-        }
+      if (isIOS) {
+        modalScreenShareText.textContent = '📱 Compartilhar Câmera';
+        modalScreenShareHint.textContent = 'iPhone/iPad não permite compartilhamento de tela via navegador.';
       } else {
-        bg = '#991b1b';
-        text = '❌ Indisponível';
-        hint = 'Seu dispositivo/navegador não suporta compartilhamento de tela ou câmera.';
+        modalScreenShareText.textContent = isMobile ? '📱 Compartilhar Tela' : '🖥️ Compartilhar Tela';
+        modalScreenShareHint.textContent = 'Seu navegador tentará compartilhar a tela. Se não for compatível, abrirá a câmera automaticamente.';
       }
-      modalScreenShareBtn.style.background = bg;
-      modalScreenShareText.textContent = text;
+      modalScreenShareBtn.style.background = '#166534';
       modalScreenShareHint.style.display = 'block';
-      modalScreenShareHint.textContent = hint;
     }
-    // Always show button when there's at least one capability
-    if (canScreenShare || canOnlyCamera) {
-      modalScreenShareBtn.style.display = '';
-    } else {
-      modalScreenShareBtn.style.display = 'none';
-    }
+    modalScreenShareBtn.style.display = '';
   }
 
   // ── Track population ──
   var knownAudioTracks = [];
   var knownTextTracks = [];
 
-  // Map language code to friendly label
   function trackLabel(track, index) {
     if (track.label && track.label.trim() !== '') return track.label;
     if (track.language && track.language.trim() !== '') {
@@ -255,13 +225,7 @@ async function initApp() {
   function updateAudioSelect() {
     var currentVal = audSel.value;
     audSel.innerHTML = '';
-    
-    if (knownAudioTracks.length <= 1) {
-      // Only 0 or 1 audio track — hide the select
-      audSel.classList.add('hidden');
-      return;
-    }
-
+    if (knownAudioTracks.length <= 1) { audSel.classList.add('hidden'); return; }
     for (var i = 0; i < knownAudioTracks.length; i++) {
       var opt = document.createElement('option');
       opt.value = i;
@@ -269,43 +233,28 @@ async function initApp() {
       audSel.appendChild(opt);
     }
     audSel.classList.remove('hidden');
-    
-    // Restore previous selection if still valid
-    if (currentVal && parseInt(currentVal) < knownAudioTracks.length) {
-      audSel.value = currentVal;
-    }
+    if (currentVal && parseInt(currentVal) < knownAudioTracks.length) { audSel.value = currentVal; }
   }
 
   function updateSubtitleSelect() {
     var currentVal = subSel.value;
     subSel.innerHTML = '';
-
-    if (knownTextTracks.length === 0) {
-      // No subtitle tracks — hide the select
-      subSel.classList.add('hidden');
-      return;
-    }
-
+    if (knownTextTracks.length === 0) { subSel.classList.add('hidden'); return; }
     for (var i = 0; i < knownTextTracks.length; i++) {
       var opt = document.createElement('option');
       opt.value = i;
       opt.textContent = '💬 ' + trackLabel(knownTextTracks[i], i);
       subSel.appendChild(opt);
     }
-    // Add "Off" option
     var offOpt = document.createElement('option');
     offOpt.value = '-1';
     offOpt.textContent = '💬 Desligado';
     subSel.appendChild(offOpt);
-    
     subSel.classList.remove('hidden');
-    
-    // Restore previous selection if still valid
     if (currentVal && (parseInt(currentVal) < knownTextTracks.length || currentVal === '-1')) {
       subSel.value = currentVal;
     } else {
       subSel.value = '-1';
-      // Also disable all text tracks
       var tr = video.textTracks;
       for (var j = 0; j < tr.length; j++) tr[j].mode = 'hidden';
     }
@@ -321,7 +270,6 @@ async function initApp() {
   }
 
   function scanTracks() {
-    // Scan audio tracks
     var at = video.audioTracks;
     if (at) {
       knownAudioTracks = [];
@@ -329,8 +277,6 @@ async function initApp() {
         knownAudioTracks.push({ label: at[i].label || '', language: at[i].language || '', id: at[i].id || '' });
       }
     }
-    
-    // Scan text tracks (subtitles/captions)
     var tt = video.textTracks;
     if (tt) {
       knownTextTracks = [];
@@ -338,68 +284,60 @@ async function initApp() {
         knownTextTracks.push({ label: tt[j].label || '', language: tt[j].language || '', kind: tt[j].kind || '' });
       }
     }
-
     console.log('[Tracks] Audio:', knownAudioTracks.length, 'Text:', knownTextTracks.length);
   }
 
   // ── WebRTC: Start Screen/Camera Share ──
+  // Tries getDisplayMedia first (screen share). If that fails or is unavailable,
+  // falls back to getUserMedia (camera + mic).
   async function startScreenShare() {
     if (isScreenSharing) return;
 
-    try {
-      if (canScreenShare) {
-        // Desktop or Android Chrome: capture screen/window/tab with system audio
-        var displayConstraints = {
+    var stream = null;
+
+    // Attempt 1: getDisplayMedia (screen/window/tab sharing)
+    if (hasGetDisplayMedia) {
+      try {
+        var displayConstraints = isMobile ? { video: true, audio: true } : {
           video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
           audio: true
         };
-        // On Android, simplify constraints for better compatibility
-        if (isMobile) {
-          displayConstraints = { video: true, audio: true };
-        }
-        screenStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
-        // Check if audio track was actually captured
-        var hasAudio = screenStream.getAudioTracks().length > 0;
+        stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+        var hasAudio = stream.getAudioTracks().length > 0;
         if (!hasAudio && !isMobile) {
-          showToast('Aviso', 'Áudio do sistema não foi capturado. Verifique se marcou "Compartilhar áudio" ao selecionar a tela.');
+          showToast('Aviso', 'Audio do sistema nao foi capturado. Verifique se marcou "Compartilhar audio".');
         }
-      } else if (canOnlyCamera) {
-        // Fallback: capture camera + mic (iOS, browsers without getDisplayMedia)
-        var constraints = { 
-          video: { 
-            width: { ideal: 1280 }, 
-            height: { ideal: 720 }, 
-            facingMode: 'environment' 
-          }, 
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 44100
-          }
+      } catch (e) {
+        console.log('getDisplayMedia failed (' + e.name + '), falling back to camera');
+      }
+    }
+
+    // Attempt 2: getUserMedia (camera + mic fallback)
+    if (!stream && hasGetUserMedia) {
+      try {
+        var constraints = {
+          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' },
+          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 }
         };
-        screenStream = await navigator.mediaDevices.getUserMedia(constraints);
-        showToast('Aviso', 'Compartilhando câmera. Para compartilhar a tela, use o app nativo (Android) ou um navegador compatível.');
-      } else {
-        showToast('Erro', 'Seu dispositivo não suporta captura de mídia.');
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        showToast('Aviso', 'Compartilhando camera. Seu navegador nao suporta captura de tela.');
+      } catch (e) {
+        if (e.name === 'NotAllowedError') {
+          showToast('Permissao Negada', 'Voce precisa permitir o compartilhamento de camera.');
+        } else if (e.name !== 'AbortError') {
+          showToast('Erro', 'Nao foi possivel capturar midia: ' + (e.message || 'erro desconhecido'));
+        }
         return;
       }
-    } catch (e) {
-      console.error('Media capture error:', e);
-      if (e.name === 'NotAllowedError') {
-        showToast('Permissão Negada', 'Você precisa permitir o compartilhamento de tela/câmera.');
-      } else if (e.name === 'NotFoundError') {
-        showToast('Erro', 'Nenhuma tela ou câmera encontrada para compartilhar.');
-      } else if (e.name === 'NotReadableError') {
-        showToast('Erro', 'O dispositivo de captura já está em uso por outro aplicativo.');
-      } else if (e.name !== 'AbortError') {
-        showToast('Erro', 'Não foi possível iniciar: ' + (e.message || 'erro desconhecido'));
-      }
+    }
+
+    if (!stream) {
+      showToast('Erro', 'Seu dispositivo/navegador nao suporta captura de midia.');
       return;
     }
 
-    screenStream.getVideoTracks()[0].addEventListener('ended', function () {
-      stopScreenShare();
-    });
+    screenStream = stream;
+    screenStream.getVideoTracks()[0].addEventListener('ended', function () { stopScreenShare(); });
 
     socket.emit('startScreenShare');
 
@@ -409,15 +347,12 @@ async function initApp() {
     screenSharerName = myNick;
 
     video.srcObject = screenStream;
-    // Mute local preview to avoid echo; remote viewers hear audio via WebRTC
     video.muted = true;
     video.play().catch(function () { });
-    console.log('Screen share started. Video tracks:', screenStream.getVideoTracks().length, 'Audio tracks:', screenStream.getAudioTracks().length);
+    console.log('Share started. Video tracks:', screenStream.getVideoTracks().length, 'Audio tracks:', screenStream.getAudioTracks().length);
 
-    // Close the media modal after starting
     closeMedia();
 
-    // Create peer connections for existing peers
     if (userListData.length > 0) {
       userListData.forEach(function (u) {
         if (u.id !== myId && !peerConnections[u.id]) {
@@ -430,28 +365,20 @@ async function initApp() {
   // ── WebRTC: Stop Screen Share ──
   function stopScreenShare() {
     if (!isScreenSharing) return;
-
-    // Stop all tracks
     if (screenStream) {
       screenStream.getTracks().forEach(function (track) { track.stop(); });
       screenStream = null;
     }
-
-    // Close all peer connections
     Object.values(peerConnections).forEach(function (pc) { pc.close(); });
     peerConnections = {};
-
     isScreenSharing = false;
     screenSharerId = null;
     screenSharerName = null;
     updateModalScreenShareButton();
     setMediaMode('file');
-
-    // Clear video
     video.srcObject = null;
     video.src = '';
     video.removeAttribute('src');
-
     socket.emit('stopScreenShare');
   }
 
@@ -459,47 +386,30 @@ async function initApp() {
   function createPeerConnectionForViewer(targetId) {
     if (!screenStream) return;
     var pc = new RTCPeerConnection(ICE_SERVERS);
-
-    // Add local tracks
-    screenStream.getTracks().forEach(function (track) {
-      pc.addTrack(track, screenStream);
-    });
-
+    screenStream.getTracks().forEach(function (track) { pc.addTrack(track, screenStream); });
     pc.onicecandidate = function (e) {
-      if (e.candidate) {
-        socket.emit('webrtc-ice-candidate', { target: targetId, candidate: e.candidate });
-      }
+      if (e.candidate) { socket.emit('webrtc-ice-candidate', { target: targetId, candidate: e.candidate }); }
     };
-
     pc.onconnectionstatechange = function () {
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         pc.close();
         delete peerConnections[targetId];
       }
     };
-
-    // Create and send offer
     pc.createOffer()
       .then(function (offer) { return pc.setLocalDescription(offer); })
-      .then(function () {
-        socket.emit('webrtc-offer', { target: targetId, sdp: pc.localDescription });
-      })
+      .then(function () { socket.emit('webrtc-offer', { target: targetId, sdp: pc.localDescription }); })
       .catch(function (err) { console.error('Error creating offer:', err); });
-
     peerConnections[targetId] = pc;
     return pc;
   }
 
   // ── WebRTC: Receive a stream as a viewer ──
   function handleReceivedOffer(data) {
-    if (isScreenSharing) return; // I'm the sharer, don't receive
-
-    // Close previous receiving connection if exists
+    if (isScreenSharing) return;
     if (receivingPeer) { receivingPeer.close(); receivingPeer = null; }
-
     var pc = new RTCPeerConnection(ICE_SERVERS);
     receivingPeer = pc;
-
     pc.ontrack = function (event) {
       if (event.streams && event.streams[0]) {
         video.srcObject = event.streams[0];
@@ -508,26 +418,19 @@ async function initApp() {
         setMediaMode('screen');
       }
     };
-
     pc.onicecandidate = function (e) {
-      if (e.candidate) {
-        socket.emit('webrtc-ice-candidate', { target: data.from, candidate: e.candidate });
-      }
+      if (e.candidate) { socket.emit('webrtc-ice-candidate', { target: data.from, candidate: e.candidate }); }
     };
-
     pc.onconnectionstatechange = function () {
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         pc.close();
         receivingPeer = null;
       }
     };
-
     pc.setRemoteDescription(new RTCSessionDescription(data.sdp))
       .then(function () { return pc.createAnswer(); })
       .then(function (answer) { return pc.setLocalDescription(answer); })
-      .then(function () {
-        socket.emit('webrtc-answer', { target: data.from, sdp: pc.localDescription });
-      })
+      .then(function () { socket.emit('webrtc-answer', { target: data.from, sdp: pc.localDescription }); })
       .catch(function (err) { console.error('Error handling offer:', err); });
   }
 
@@ -539,7 +442,6 @@ async function initApp() {
   }
 
   function handleReceivedIceCandidate(data) {
-    // Could be from a peer connection as viewer or as sharer
     var pc = peerConnections[data.from] || receivingPeer;
     if (!pc) return;
     try {
@@ -570,8 +472,8 @@ async function initApp() {
     socket.on('connect_error', function (err) {
       console.error('Socket error:', err.message);
       loginErr.style.display = 'block';
-      loginErr.textContent = err.message.includes('Token') ? 'Token inválido.' : 'Erro: ' + err.message;
-      statusBar.textContent = '❌ Falha na conexão';
+      loginErr.textContent = err.message.includes('Token') ? 'Token invalido.' : 'Erro: ' + err.message;
+      statusBar.textContent = '❌ Falha na conexao';
       socket = null;
     });
 
@@ -580,13 +482,11 @@ async function initApp() {
     socket.on('roomState', function (st) {
       myId = st.myId || myId;
       if (st.mediaType === 'screen' && st.screenSharer) {
-        // There is an active screen share — wait for WebRTC offer from sharer
         screenSharerId = st.screenSharer;
         screenSharerName = st.screenSharerName;
         setMediaMode('screen');
         closeMedia();
-        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
-        // The sharer will send WebRTC offers to new joiners
+        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguem');
       } else if (st.currentVideo) {
         setMediaMode('file');
         var src = st.currentVideo.startsWith('http') ? st.currentVideo : BACKEND_URL + st.currentVideo;
@@ -607,7 +507,7 @@ async function initApp() {
         screenSharerName = st.screenSharerName;
         setMediaMode('screen');
         closeMedia();
-        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
+        curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguem');
       } else if (st.currentVideo) {
         setMediaMode('file');
         var src = st.currentVideo.startsWith('http') ? st.currentVideo : BACKEND_URL + st.currentVideo;
@@ -634,41 +534,25 @@ async function initApp() {
     socket.on('userList', function (users) {
       userListData = users || [];
       renderUserStatusBar();
-
-      // If I'm screen sharing, create peer connections for new users
       if (isScreenSharing && screenStream) {
         var userIds = userListData.map(function (u) { return u.id; });
-        // Create peer connections for users that don't have one yet
         userIds.forEach(function (uid) {
-          if (uid !== myId && !peerConnections[uid]) {
-            createPeerConnectionForViewer(uid);
-          }
+          if (uid !== myId && !peerConnections[uid]) { createPeerConnectionForViewer(uid); }
         });
-        // Clean up connections for users who left
         Object.keys(peerConnections).forEach(function (pid) {
-          if (userIds.indexOf(pid) === -1) {
-            peerConnections[pid].close();
-            delete peerConnections[pid];
-          }
+          if (userIds.indexOf(pid) === -1) { peerConnections[pid].close(); delete peerConnections[pid]; }
         });
       }
     });
 
-    // ── WebRTC Signaling Events ──
     socket.on('webrtc-offer', function (data) {
-      if (isScreenSharing) return; // I'm the sharer, not a receiver
+      if (isScreenSharing) return;
       handleReceivedOffer(data);
     });
 
-    socket.on('webrtc-answer', function (data) {
-      handleReceivedAnswer(data);
-    });
+    socket.on('webrtc-answer', function (data) { handleReceivedAnswer(data); });
+    socket.on('webrtc-ice-candidate', function (data) { handleReceivedIceCandidate(data); });
 
-    socket.on('webrtc-ice-candidate', function (data) {
-      handleReceivedIceCandidate(data);
-    });
-
-    // ── Screen Share Events ──
     socket.on('screenShareStarted', function (data) {
       screenSharerId = data.screenSharer;
       screenSharerName = data.screenSharerName;
@@ -680,14 +564,12 @@ async function initApp() {
     socket.on('screenShareStopped', function (data) {
       screenSharerId = null;
       screenSharerName = null;
-      // Close receiving peer connection
       if (receivingPeer) { receivingPeer.close(); receivingPeer = null; }
-      // Clear video
       video.srcObject = null;
       video.src = '';
       video.removeAttribute('src');
       setMediaMode('file');
-      curVidLbl.textContent = 'Nenhum vídeo selecionado';
+      curVidLbl.textContent = 'Nenhum video selecionado';
     });
 
     socket.on('screenShareError', function (data) {
@@ -713,7 +595,7 @@ async function initApp() {
     userStatusBar.innerHTML = sorted.map(function (u) {
       var isMe = u.id === myId;
       var sharing = (u.id === screenSharerId && screenSharerId) ? ' 🖥️' : '';
-      return '<span class="user-chip"><span class="dot ' + esc(u.status || 'online') + '"></span>' + esc(u.nickname) + sharing + (isMe ? ' (você)' : '') + '</span>';
+      return '<span class="user-chip"><span class="dot ' + esc(u.status || 'online') + '"></span>' + esc(u.nickname) + sharing + (isMe ? ' (voce)' : '') + '</span>';
     }).join('');
   }
 
@@ -733,76 +615,34 @@ async function initApp() {
     if (video.duration) { progF.style.width = (video.currentTime / video.duration * 100) + '%'; timeD.textContent = fmt(video.currentTime) + ' / ' + fmt(video.duration); }
   });
   
-  // Listen for track additions/changes
   video.audioTracks && video.audioTracks.addEventListener('addtrack', function () {
-    console.log('[Tracks] Audio track added');
-    scanTracks();
-    updateAudioSelect();
-    // Enable first audio track
-    var at = video.audioTracks;
-    if (at && at.length === 1) at[0].enabled = true;
+    scanTracks(); updateAudioSelect();
+    var at = video.audioTracks; if (at && at.length === 1) at[0].enabled = true;
   });
-  
-  video.audioTracks && video.audioTracks.addEventListener('removetrack', function () {
-    scanTracks();
-    updateAudioSelect();
-  });
-  
-  video.audioTracks && video.audioTracks.addEventListener('change', function () {
-    scanTracks();
-    updateAudioSelect();
-  });
+  video.audioTracks && video.audioTracks.addEventListener('removetrack', function () { scanTracks(); updateAudioSelect(); });
+  video.audioTracks && video.audioTracks.addEventListener('change', function () { scanTracks(); updateAudioSelect(); });
 
   video.textTracks && video.textTracks.addEventListener('addtrack', function () {
-    console.log('[Tracks] Text track added');
-    scanTracks();
-    updateSubtitleSelect();
-    // Apply current subtitle selection to new track
+    scanTracks(); updateSubtitleSelect();
     setTimeout(function () {
-      var ix = parseInt(subSel.value);
-      var tr = video.textTracks;
-      if (ix === -1) {
-        for (var i = 0; i < tr.length; i++) tr[i].mode = 'hidden';
-      } else if (!isNaN(ix) && ix < tr.length) {
-        for (var j = 0; j < tr.length; j++) tr[j].mode = (j === ix ? 'showing' : 'hidden');
-      }
+      var ix = parseInt(subSel.value), tr = video.textTracks;
+      if (ix === -1) { for (var i = 0; i < tr.length; i++) tr[i].mode = 'hidden'; }
+      else if (!isNaN(ix) && ix < tr.length) { for (var j = 0; j < tr.length; j++) tr[j].mode = (j === ix ? 'showing' : 'hidden'); }
     }, 50);
   });
-
-  video.textTracks && video.textTracks.addEventListener('removetrack', function () {
-    scanTracks();
-    updateSubtitleSelect();
-  });
-
-  video.textTracks && video.textTracks.addEventListener('change', function () {
-    scanTracks();
-    updateSubtitleSelect();
-  });
+  video.textTracks && video.textTracks.addEventListener('removetrack', function () { scanTracks(); updateSubtitleSelect(); });
+  video.textTracks && video.textTracks.addEventListener('change', function () { scanTracks(); updateSubtitleSelect(); });
 
   video.addEventListener('loadedmetadata', function () {
     if (currentMediaType === 'screen') return;
     timeD.textContent = '00:00 / ' + fmt(video.duration);
-    
-    // Scan and populate track selects
-    scanTracks();
-    updateAudioSelect();
-    updateSubtitleSelect();
-    
-    // Enable first audio track by default
+    scanTracks(); updateAudioSelect(); updateSubtitleSelect();
     var at = video.audioTracks;
-    if (at && at.length > 0) {
-      for (var i = 0; i < at.length; i++) at[i].enabled = (i === 0);
-    }
-    // Default subtitles to off
+    if (at && at.length > 0) { for (var i = 0; i < at.length; i++) at[i].enabled = (i === 0); }
     var tt = video.textTracks;
-    if (tt) {
-      for (var j = 0; j < tt.length; j++) tt[j].mode = 'hidden';
-    }
+    if (tt) { for (var j = 0; j < tt.length; j++) tt[j].mode = 'hidden'; }
     subSel.value = '-1';
   });
-  
-  video.addEventListener('waiting', function () {});
-  video.addEventListener('playing', function () {});
 
   // ── Mouse/Touch → show/hide ──
   video.addEventListener('mousemove', showAllUI);
@@ -834,11 +674,7 @@ async function initApp() {
 
   // ── Modal Screen Share Button ──
   modalScreenShareBtn.addEventListener('click', function () {
-    if (isScreenSharing) {
-      stopScreenShare();
-    } else {
-      startScreenShare();
-    }
+    if (isScreenSharing) { stopScreenShare(); } else { startScreenShare(); }
   });
 
   // ── Chat ──
@@ -894,7 +730,7 @@ async function initApp() {
       try {
         var files = JSON.parse(xhr.responseText);
         if (!Array.isArray(files) || !files.length) {
-          mediaList.innerHTML = '<div class="empty">Nenhuma mídia disponível.<br><br>Clique em <b>Enviar</b> para adicionar um vídeo.</div>';
+          mediaList.innerHTML = '<div class="empty">Nenhuma midia disponivel.<br><br>Clique em <b>Enviar</b> para adicionar um video.</div>';
         } else {
           mediaList.innerHTML = files.map(function (f) {
             var sm = (f.size / 1024 / 1024).toFixed(1);
