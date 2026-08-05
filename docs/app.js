@@ -556,6 +556,7 @@ async function initApp() {
         screenSharerId = st.screenSharer;
         screenSharerName = st.screenSharerName;
         setMediaMode('screen');
+        closeMedia();
         curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
         // The sharer will send WebRTC offers to new joiners
       } else if (st.currentVideo) {
@@ -577,6 +578,7 @@ async function initApp() {
         screenSharerId = st.screenSharer;
         screenSharerName = st.screenSharerName;
         setMediaMode('screen');
+        closeMedia();
         curVidLbl.textContent = 'Tela de ' + (st.screenSharerName || 'alguém');
       } else if (st.currentVideo) {
         setMediaMode('file');
@@ -644,6 +646,7 @@ async function initApp() {
       screenSharerName = data.screenSharerName;
       curVidLbl.textContent = 'Tela de ' + data.screenSharerName;
       setMediaMode('screen');
+      closeMedia();
     });
 
     socket.on('screenShareStopped', function (data) {

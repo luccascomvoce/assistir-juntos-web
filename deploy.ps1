@@ -1,5 +1,5 @@
 # ── Deploy Script for Assistir Juntos ──
-# Pipeline completo: rebuild container → extract tunnel URL → commit & push to GitHub
+# Pipeline completo: rebuild container -> extract tunnel URL -> commit & push to GitHub
 param(
     [switch]$SkipGit = $false
 )
@@ -9,7 +9,7 @@ $startTime = Get-Date
 
 Write-Host ""
 Write-Host "╔══════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   🚀 DEPLOY - ASSISTIR JUNTOS       ║" -ForegroundColor Cyan
+Write-Host "║   DEPLOY - ASSISTIR JUNTOS          ║" -ForegroundColor Cyan
 Write-Host "╚══════════════════════════════════════╝" -ForegroundColor Cyan
 Write-Host ""
 
@@ -21,30 +21,30 @@ Write-Host "       Containers parados." -ForegroundColor Green
 # ── Etapa 2: Build e start ──
 Write-Host "[2/5] Construindo imagem e iniciando containers..." -ForegroundColor Yellow
 docker-compose up -d --build
-Write-Host "       Build concluído, containers iniciados." -ForegroundColor Green
+Write-Host "       Build concluido, containers iniciados." -ForegroundColor Green
 
-# ── Etapa 3: Aguardar túnel Cloudflare ──
-Write-Host "[3/5] Aguardando túnel Cloudflare (12s)..." -ForegroundColor Yellow
+# ── Etapa 3: Aguardar tunel Cloudflare ──
+Write-Host "[3/5] Aguardando tunel Cloudflare (12s)..." -ForegroundColor Yellow
 Start-Sleep -Seconds 12
 
-# Extrair URL do túnel (tenta múltiplas vezes)
+# Extrair URL do tunel (tenta multiplas vezes)
 $url = $null
 $maxRetries = 5
 for ($i = 0; $i -lt $maxRetries; $i++) {
     $logs = docker logs assistir-juntos-tunnel 2>&1 | Out-String
     $url = [regex]::Match($logs, 'https://[a-z0-9.-]+\.trycloudflare\.com').Value
     if ($url) { break }
-    Write-Host "       Tentativa $($i+1)/$maxRetries - aguardando túnel..." -ForegroundColor Gray
+    Write-Host "       Tentativa $($i+1)/$maxRetries - aguardando tunel..." -ForegroundColor Gray
     Start-Sleep -Seconds 5
 }
 
 if (-not $url) {
-    Write-Host "❌ ERRO: URL do túnel não encontrada após $maxRetries tentativas." -ForegroundColor Red
+    Write-Host "ERRO: URL do tunel nao encontrada apos $maxRetries tentativas." -ForegroundColor Red
     Write-Host "   Verifique: docker logs assistir-juntos-tunnel" -ForegroundColor Gray
     exit 1
 }
 
-Write-Host "       Túnel detectado: $url" -ForegroundColor Green
+Write-Host "       Tunel detectado: $url" -ForegroundColor Green
 
 # ── Etapa 4: Salvar URL e mostrar tokens ──
 Write-Host "[4/5] Atualizando tunnel-url.json..." -ForegroundColor Yellow
@@ -58,7 +58,7 @@ Write-Host "       Tokens de acesso:" -ForegroundColor Cyan
 if (Test-Path "data\tokens.json") {
     $tokens = Get-Content "data\tokens.json" | ConvertFrom-Json
     $tokens.PSObject.Properties | ForEach-Object {
-        Write-Host "         $($_.Name) → token: $($_.Value)" -ForegroundColor White
+        Write-Host "         $($_.Name) - token: $($_.Value)" -ForegroundColor White
     }
 } else {
     Write-Host "         Nenhum token configurado." -ForegroundColor Gray
@@ -72,16 +72,17 @@ if ($SkipGit) {
     
     $hasChanges = git status --porcelain 2>&1
     if ($hasChanges) {
-        git add docs/tunnel-url.json 2>&1 | Out-Null
-        $commitMsg = "deploy: atualiza tunnel URL ($(Get-Date -Format 'yyyy-MM-dd HH:mm'))"
+        git add docs/ 2>&1 | Out-Null
+        $dateStr = Get-Date -Format "yyyy-MM-dd HH:mm"
+        $commitMsg = "deploy: atualiza tunnel URL ($dateStr)"
         git commit -m $commitMsg 2>&1 | Out-Null
         Write-Host "       Commit: $commitMsg" -ForegroundColor Gray
         
         git push origin main 2>&1 | Out-Null
-        Write-Host "       Push para origin/main concluído." -ForegroundColor Green
-        Write-Host "       GitHub Pages fará o deploy automaticamente em ~1-2 min." -ForegroundColor Gray
+        Write-Host "       Push para origin/main concluido." -ForegroundColor Green
+        Write-Host "       GitHub Pages fara o deploy automaticamente em ~1-2 min." -ForegroundColor Gray
     } else {
-        Write-Host "       Nenhuma alteração para commitar (URL já está atualizada)." -ForegroundColor Gray
+        Write-Host "       Nenhuma alteracao para commitar (URL ja esta atualizada)." -ForegroundColor Gray
     }
 }
 
@@ -89,8 +90,8 @@ if ($SkipGit) {
 $elapsed = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 1)
 Write-Host ""
 Write-Host "══════════════════════════════════════" -ForegroundColor Green
-Write-Host "  ✅ DEPLOY CONCLUÍDO (${elapsed}s)" -ForegroundColor Green
-Write-Host "  🔗 $url" -ForegroundColor White
-Write-Host "  🌐 https://luccascomvoce.github.io/assistir-juntos-web" -ForegroundColor White
+Write-Host "  DEPLOY CONCLUIDO (${elapsed}s)" -ForegroundColor Green
+Write-Host "  $url" -ForegroundColor White
+Write-Host "  https://luccascomvoce.github.io/assistir-juntos-web" -ForegroundColor White
 Write-Host "══════════════════════════════════════" -ForegroundColor Green
 Write-Host ""
