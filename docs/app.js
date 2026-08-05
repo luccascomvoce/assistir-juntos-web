@@ -1003,8 +1003,27 @@ async function initApp() {
   });
 
   // ── Chat ──
-  function openChat() { chatPanel.classList.add('open'); chatOpen = true; unread = 0; chatBadge.classList.remove('show'); chatBadge.textContent = '0'; chatIn.focus(); dismissAllToasts(); showAllUI(); }
-  function closeChat() { chatPanel.classList.remove('open'); chatOpen = false }
+  function openChat() {
+    chatPanel.classList.add('open');
+    chatOpen = true;
+    unread = 0; chatBadge.classList.remove('show'); chatBadge.textContent = '0';
+    // Lock body scroll on mobile to prevent keyboard from pushing the viewport
+    document.body.classList.add('chat-open-overlay');
+    // Defer focus so the class is applied and the keyboard opens after layout settles
+    setTimeout(function () { chatIn.focus(); }, 150);
+    dismissAllToasts();
+    showAllUI();
+  }
+  function closeChat() {
+    // Dismiss keyboard by blurring the input and briefly disabling it
+    chatIn.blur();
+    chatIn.disabled = true;
+    setTimeout(function () { chatIn.disabled = false; }, 100);
+    // Unlock body scroll
+    document.body.classList.remove('chat-open-overlay');
+    chatPanel.classList.remove('open');
+    chatOpen = false;
+  }
   chatToggle.addEventListener('click', function () { chatOpen ? closeChat() : openChat(); showAllUI() });
   chatClose.addEventListener('click', function () { closeChat(); showAllUI() });
 
