@@ -1002,14 +1002,42 @@ async function initApp() {
     if (isScreenSharing) { stopScreenShare(); } else { startScreenShare(); }
   });
 
+  // ── Visual Viewport handler for mobile keyboard ──
+  var vvHandler = null;
+  function pinChatToVisualViewport() {
+    if (!window.visualViewport) return;
+    var vv = window.visualViewport;
+    vvHandler = function () {
+      if (!chatOpen) return;
+      // Keep the chat panel anchored to the visual viewport top
+      chatPanel.style.top = (vv.offsetTop || 0) + 'px';
+      chatPanel.style.height = (vv.height || window.innerHeight) + 'px';
+    };
+    vv.addEventListener('resize', vvHandler);
+    vv.addEventListener('scroll', vvHandler);
+    vvHandler(); // initial pin
+  }
+  function unpinChatFromVisualViewport() {
+    if (!window.visualViewport || !vvHandler) return;
+    var vv = window.visualViewport;
+    vv.removeEventListener('resize', vvHandler);
+    vv.removeEventListener('scroll', vvHandler);
+    vvHandler = null;
+    // Reset to defaults
+    chatPanel.style.top = '';
+    chatPanel.style.height = '';
+  }
+
   // ── Chat ──
   function openChat() {
     chatPanel.classList.add('open');
     chatOpen = true;
     unread = 0; chatBadge.classList.remove('show'); chatBadge.textContent = '0';
-    // Lock body scroll on mobile to prevent keyboard from pushing the viewport
+    // Lock body scroll via CSS class
     document.body.classList.add('chat-open-overlay');
-    // Defer focus so the class is applied and the keyboard opens after layout settles
+    // Pin to visual viewport so header stays visible when keyboard is open
+    pinChatToVisualViewport();
+    // Defer focus so keyboard opens after layout settles
     setTimeout(function () { chatIn.focus(); }, 150);
     dismissAllToasts();
     showAllUI();
@@ -1019,6 +1047,8 @@ async function initApp() {
     chatIn.blur();
     chatIn.disabled = true;
     setTimeout(function () { chatIn.disabled = false; }, 100);
+    // Release viewport pin
+    unpinChatFromVisualViewport();
     // Unlock body scroll
     document.body.classList.remove('chat-open-overlay');
     chatPanel.classList.remove('open');
