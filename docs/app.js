@@ -287,55 +287,77 @@ async function initApp() {
     console.log('[Tracks] Audio:', knownAudioTracks.length, 'Text:', knownTextTracks.length);
   }
 
-  // ── WebRTC: Start Screen/Camera Share ──
-  // Tries getDisplayMedia first (screen share). If that fails or is unavailable,
-  // falls back to getUserMedia (camera + mic).
+  // ── Start sharing (screen or camera) ──
+  // Uses getDisplayMedia for screen share (same API as Google Meet), with automatic
+  // fallback to getUserMedia (camera) on any failure.
   async function startScreenShare() {
     if (isScreenSharing) return;
 
     var stream = null;
+    var shareType = 'screen';
 
-    // Attempt 1: getDisplayMedia (screen/window/tab sharing)
-    if (hasGetDisplayMedia) {
-      try {
-        var displayConstraints = isMobile ? { video: true, audio: true } : {
-          video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-          audio: true
-        };
-        stream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
-        var hasAudio = stream.getAudioTracks().length > 0;
-        if (!hasAudio && !isMobile) {
-          showToast('Aviso', 'Audio do sistema nao foi capturado. Verifique se marcou "Compartilhar audio".');
+    // Step 1: Try screen sharing via getDisplayMedia
+    // Minimal constraints — exactly what Google Meet uses. On Android avoid any
+    // width/height/frameRate that may cause getDisplayMedia to fail silently.
+    try {
+      var dm = navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia;
+      if (typeof dm === 'function') {
+        // Minimal constraints, especially for mobile.
+        var gdmOpts = isMobile ? { video: true } : { video: true, audio: true };
+        stream = await dm.call(navigator.mediaDevices, gdmOpts);
+        if (stream && stream.getVideoTracks().length > 0) {
+          console.log('[ScreenShare] getDisplayMedia OK. Video tracks:', stream.getVideoTracks().length);
+        } else {
+          // got a stream but no video — discard and fall through to camera
+          if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
+          stream = null;
+          console.warn('[ScreenShare] getDisplayMedia returned no video track');
         }
-      } catch (e) {
-        console.log('getDisplayMedia failed (' + e.name + '), falling back to camera');
+      } else {
+        console.warn('[ScreenShare] getDisplayMedia is not a function');
       }
+    } catch (e) {
+      console.error('[ScreenShare] getDisplayMedia error:', e.name, e.message || e);
+      // AbortError = user cancelled the picker — just stop
+      if (e.name === 'AbortError') return;
+      // Any other error — fall through to camera below
+      stream = null;
     }
 
-    // Attempt 2: getUserMedia (camera + mic fallback)
-    if (!stream && hasGetUserMedia) {
+    // Step 2: Fall back to camera if screen sharing failed or is unavailable
+    if (!stream) {
+      shareType = 'camera';
       try {
-        var constraints = {
-          video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' },
-          audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 }
-        };
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        showToast('Aviso', 'Compartilhando camera. Seu navegador nao suporta captura de tela.');
+        var gum = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+        if (typeof gum === 'function') {
+          stream = await gum.call(navigator.mediaDevices, {
+            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'environment' },
+            audio: { echoCancellation: true, noiseSuppression: true }
+          });
+          console.log('[ScreenShare] getUserMedia (camera) OK');
+          if (shareType !== 'screen') {
+            showToast('Aviso', 'Captura de tela indisponivel. Compartilhando camera.');
+          }
+        }
       } catch (e) {
+        console.error('[ScreenShare] getUserMedia error:', e.name, e.message || e);
         if (e.name === 'NotAllowedError') {
-          showToast('Permissao Negada', 'Voce precisa permitir o compartilhamento de camera.');
+          showToast('Permissao Negada', 'Permita o acesso a camera/microfone nas configuracoes do navegador.');
         } else if (e.name !== 'AbortError') {
-          showToast('Erro', 'Nao foi possivel capturar midia: ' + (e.message || 'erro desconhecido'));
+          showToast('Erro', 'Falha ao capturar midia: ' + (e.message || e.name));
         }
         return;
       }
     }
 
-    if (!stream) {
-      showToast('Erro', 'Seu dispositivo/navegador nao suporta captura de midia.');
+    // Step 3: Validate the stream
+    if (!stream || stream.getVideoTracks().length === 0) {
+      showToast('Erro', 'Nao foi possivel obter video. Verifique as permissoes do navegador.');
+      if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); }
       return;
     }
 
+    // All good — wire it up
     screenStream = stream;
     screenStream.getVideoTracks()[0].addEventListener('ended', function () { stopScreenShare(); });
 
@@ -348,11 +370,15 @@ async function initApp() {
 
     video.srcObject = screenStream;
     video.muted = true;
-    video.play().catch(function () { });
-    console.log('Share started. Video tracks:', screenStream.getVideoTracks().length, 'Audio tracks:', screenStream.getAudioTracks().length);
+    video.play().catch(function () {});
+
+    console.log('[ScreenShare] Started as', shareType,
+                'Video:', screenStream.getVideoTracks().length,
+                'Audio:', screenStream.getAudioTracks().length);
 
     closeMedia();
 
+    // Set up peer connections for existing users
     if (userListData.length > 0) {
       userListData.forEach(function (u) {
         if (u.id !== myId && !peerConnections[u.id]) {
