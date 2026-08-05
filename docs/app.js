@@ -74,11 +74,7 @@ async function initApp() {
   var isAndroidChrome = isAndroid && /Chrome/i.test(navigator.userAgent) && !/Edge/i.test(navigator.userAgent);
   var hasGetDisplayMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   var hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-  // Detect Brave browser (blocks getDisplayMedia on Android for privacy, even though Chromium-based)
-  var isBrave = !!(navigator.brave && typeof navigator.brave.isBrave === 'function') || 
-                /brave/i.test(navigator.userAgent);
-  // Chrome 94+, Edge, Samsung Internet, and other Chromium browsers on Android support getDisplayMedia.
-  // Exception: Brave intentionally blocks getDisplayMedia on Android for privacy.
+  // All Chromium browsers (Chrome 94+, Edge, Samsung Internet, Brave, etc.) on Android support getDisplayMedia.
   // Strategy: if the browser exposes getDisplayMedia, it can screen share.
   var canScreenShare = hasGetDisplayMedia;
   var canOnlyCamera = !canScreenShare && hasGetUserMedia;
@@ -199,10 +195,8 @@ async function initApp() {
         text = '📱 Compartilhar Câmera';
         if (isIOS) {
           hint = 'iPhone/iPad não permite compartilhamento de tela via navegador. Apenas câmera + microfone disponível.';
-        } else if (isAndroid && isBrave) {
-          hint = 'O Brave bloqueia o compartilhamento de tela por padrão. Para compartilhar a tela, abra esta página no Chrome para Android.';
         } else {
-          hint = 'Este navegador não suporta captura de tela. Apenas câmera + microfone disponível.';
+          hint = 'Captura de tela indisponível neste navegador. Apenas câmera + microfone.';
         }
       } else {
         bg = '#991b1b';
