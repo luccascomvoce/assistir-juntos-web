@@ -79,6 +79,20 @@ async function initApp() {
   var canScreenShare = hasGetDisplayMedia;
   var canOnlyCamera = !canScreenShare && hasGetUserMedia;
 
+  // Diagnostic logging for screen share capability detection
+  console.log('[Capabilities]', JSON.stringify({
+    userAgent: navigator.userAgent,
+    isMobile: isMobile,
+    isAndroid: isAndroid,
+    isIOS: isIOS,
+    hasGetDisplayMedia: hasGetDisplayMedia,
+    hasGetUserMedia: hasGetUserMedia,
+    canScreenShare: canScreenShare,
+    canOnlyCamera: canOnlyCamera,
+    mediaDevices: !!navigator.mediaDevices,
+    getDisplayMediaType: typeof (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+  }));
+
   // ── WebRTC state ──
   var isScreenSharing = false;         // true if I am the screen sharer
   var screenStream = null;             // my local MediaStream when sharing
