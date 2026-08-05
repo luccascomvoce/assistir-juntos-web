@@ -372,9 +372,41 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ── Camera WebRTC Signaling ──
+  socket.on("camera-webrtc-offer", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    if (data.target) {
+      io.to(data.target).emit("camera-webrtc-offer", { from: socket.id, nickname: socket.nickname, sdp: data.sdp });
+    }
+  });
+
+  socket.on("camera-webrtc-answer", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    if (data.target) {
+      io.to(data.target).emit("camera-webrtc-answer", { from: socket.id, sdp: data.sdp });
+    }
+  });
+
+  // ── Mic & Camera State ──
+  socket.on("micStateChanged", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    socket.to(r).emit("micStateChanged", { id: socket.id, nickname: socket.nickname, muted: data.muted });
+  });
+
+  socket.on("cameraStateChanged", (data) => {
+    const r = socket.currentRoom;
+    if (!r) return;
+    socket.to(r).emit("cameraStateChanged", { id: socket.id, nickname: socket.nickname, active: data.active });
+  });
+
   socket.on("disconnect", () => {
     const r = socket.currentRoom;
     if (r && rooms[r]) {
+      // Notify others that this user's camera stopped
+      socket.to(r).emit("cameraStateChanged", { id: socket.id, nickname: socket.nickname, active: false });
       // If screen sharer disconnects, clean up screen share state
       if (rooms[r].screenSharer === socket.id) {
         rooms[r].mediaType = "file";
