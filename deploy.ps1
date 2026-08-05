@@ -1,10 +1,10 @@
-<![CDATA[# Deploy Script for Assistir Juntos
+# Deploy Script for Assistir Juntos
 # Pipeline completo: rebuild container -> extract tunnel URL -> commit & push to GitHub
 param(
     [switch]$SkipGit = $false
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $startTime = Get-Date
 
 Write-Host ""
@@ -95,4 +95,3 @@ Write-Host "  $tunnelUrl" -ForegroundColor White
 Write-Host "  https://luccascomvoce.github.io/assistir-juntos-web" -ForegroundColor White
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
-]]>
